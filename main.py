@@ -1,25 +1,54 @@
 import os
 import logging
-import asyncio
+import json
+import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     ContextTypes, ConversationHandler
 )
-from supabase import create_client
 from scraper import run_scraper
 
 # Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Supabase
+# Config
+TOKEN = os.environ["TELEGRAM_TOKEN"]
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Telegram Token
-TOKEN = os.environ["TELEGRAM_TOKEN"]
+HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+    "Prefer": "return=representation"
+}
+
+
+def db_get(table, filters=None):
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    r = httpx.get(url, headers=HEADERS, params=filters or {})
+    return r.json() if r.status_code == 200 else []
+
+
+def db_upsert(table, data):
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    headers = {**HEADERS, "Prefer": "resolution=merge-duplicates,return=representation"}
+    r = httpx.post(url, headers=headers, json=data)
+    return r.status_code in (200, 201)
+
+
+def db_insert(table, data):
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    r = httpx.post(url, headers=HEADERS, json=data)
+    return r.status_code in (200, 201)
+
+
+def db_update(table, data, filters):
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    r = httpx.patch(url, headers=HEADERS, json=data, params=filters)
+    return r.status_code in (200, 204)
 
 # Conversation states
 BEZIRK, BUDGET, ZIMMER = range(3)
@@ -164,7 +193,7 @@ async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
     """Runs every 15 minutes to check for new listings."""
     logger.info("Running scraper...")
-    new_listings = await run_scraper(supabase)
+    new_listings = await run_scraper(SUPABASE_URL, SUPABASE_KEY)
 
     if not new_listings:
         logger.info("No new listings found.")
