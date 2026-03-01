@@ -267,7 +267,7 @@ def main():
             BUDGET: [CallbackQueryHandler(budget_handler, pattern="^budget:")],
             ZIMMER: [CallbackQueryHandler(zimmer_handler, pattern="^zimmer:")],
         },
-        fallbacks=[]
+        fallbacks=[CommandHandler("start", start)]
     )
 
     app.add_handler(conv_handler)
