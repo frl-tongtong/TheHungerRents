@@ -147,31 +147,44 @@ async def scrape_degewo():
     return listings
 
 
-async def run_scraper(supabase):
+async def run_scraper(supabase_url, supabase_key):
     """Main scraper function - runs all scrapers and returns only NEW listings."""
-    all_listings = []
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation"
+    }
 
-    # Run all scrapers
+    all_listings = []
     all_listings += await scrape_inberlinwohnen()
     all_listings += await scrape_degewo()
-    # More scrapers can be added here later
 
     logger.info(f"Found {len(all_listings)} total listings")
 
-    # Check which ones are new (not in database)
     new_listings = []
-    for listing in all_listings:
-        url = listing.get("url")
-        if not url:
-            continue
-        try:
-            result = supabase.table("seen_listings").select("url").eq("url", url).execute()
-            if not result.data:
-                # New listing! Save it and add to notifications list
-                supabase.table("seen_listings").insert({"url": url, "titel": listing.get("titel", "")}).execute()
-                new_listings.append(listing)
-        except Exception as e:
-            logger.error(f"DB error: {e}")
+    async with httpx.AsyncClient(timeout=10) as client:
+        for listing in all_listings:
+            url = listing.get("url")
+            if not url:
+                continue
+            try:
+                # Check if already seen
+                r = await client.get(
+                    f"{supabase_url}/rest/v1/seen_listings",
+                    headers=headers,
+                    params={"url": f"eq.{url}"}
+                )
+                if r.status_code == 200 and len(r.json()) == 0:
+                    # New! Save and notify
+                    await client.post(
+                        f"{supabase_url}/rest/v1/seen_listings",
+                        headers=headers,
+                        json={"url": url, "titel": listing.get("titel", "")}
+                    )
+                    new_listings.append(listing)
+            except Exception as e:
+                logger.error(f"DB error: {e}")
 
     logger.info(f"Found {len(new_listings)} NEW listings")
     return new_listings
