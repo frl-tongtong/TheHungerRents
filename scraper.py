@@ -165,7 +165,12 @@ async def scrape_howoge():
                 wait_until="networkidle",
                 timeout=60000
             )
-            await page.wait_for_selector("div.flat-single-grid-item", timeout=30000)
+            # Cookie Banner wegklicken falls vorhanden
+try:
+    await page.click("button.cookie-accept, #cookie-accept, .cookie-consent button", timeout=5000)
+except:
+    pass
+await page.wait_for_selector("article.angebot-big-box", timeout=60000)
             html = await page.content()
             await browser.close()
 
