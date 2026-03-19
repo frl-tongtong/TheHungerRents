@@ -22,10 +22,11 @@ HEADERS = {
     "Prefer": "return=representation"
 }
 
-# Conversation states as simple integers
+# Conversation states
 BEZIRK = 0
 BUDGET = 1
 ZIMMER = 2
+WBS = 3
 
 BEZIRKE = [
     "Alle", "Mitte", "Prenzlauer Berg / Pankow",
@@ -34,6 +35,7 @@ BEZIRKE = [
 ]
 BUDGETS = ["bis 800€", "bis 1.000€", "bis 1.200€", "kein Limit"]
 ZIMMER_OPTIONS = ["1+", "2+", "3+", "egal"]
+WBS_OPTIONS = ["Ohne WBS", "Mit WBS", "Egal"]
 
 
 def db_get(table, filters=None):
@@ -123,17 +125,33 @@ async def zimmer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data["zimmer"] = query.data.replace("zimmer_", "", 1)
+    keyboard = [[InlineKeyboardButton(w, callback_data=f"wbs_{w}")] for w in WBS_OPTIONS]
+    await query.edit_message_text(
+        "📋 Sollen Wohnungen mit WBS-Pflicht angezeigt werden?\n\n"
+        "_WBS = Wohnberechtigungsschein erforderlich_",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return WBS
+
+
+async def wbs_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data["wbs"] = query.data.replace("wbs_", "", 1)
 
     user_id = str(update.effective_user.id)
     bezirke = context.user_data.get("bezirke", ["Alle"])
     budget = context.user_data.get("budget", "kein Limit")
     zimmer = context.user_data.get("zimmer", "egal")
+    wbs = context.user_data.get("wbs", "Egal")
 
     db_upsert("user_preferences", {
         "user_id": user_id,
         "bezirke": json.dumps(bezirke),
         "budget": budget,
         "zimmer": zimmer,
+        "wbs": wbs,
         "active": True
     })
 
@@ -141,7 +159,8 @@ async def zimmer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ *Alles gespeichert!*\n\n"
         f"📍 Bezirke: {', '.join(bezirke)}\n"
         f"💶 Budget: {budget}\n"
-        f"🚪 Zimmer: {zimmer}\n\n"
+        f"🚪 Zimmer: {zimmer}\n"
+        f"📋 WBS: {wbs}\n\n"
         "Ich melde mich sobald etwas passt! 🏹\n\n"
         "/einstellungen – Präferenzen ändern\n"
         "/pause – Benachrichtigungen pausieren",
@@ -189,15 +208,30 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
         bezirke = json.loads(user["bezirke"]) if isinstance(user["bezirke"], str) else user["bezirke"]
         max_budget = budget_map.get(user["budget"], 99999)
         min_zimmer = zimmer_map.get(user["zimmer"], 0)
+        wbs_filter = user.get("wbs", "Egal")
 
         for listing in new_listings:
+            # Bezirk Filter
             if "Alle" not in bezirke:
                 if not any(b.lower() in listing.get("bezirk", "").lower() for b in bezirke):
                     continue
+
+            # Budget Filter
             if listing.get("preis") and listing["preis"] > max_budget:
                 continue
+
+            # Zimmer Filter
             if listing.get("zimmer") and min_zimmer > 0 and listing["zimmer"] < min_zimmer:
                 continue
+
+            # WBS Filter
+            listing_wbs = listing.get("wbs", False)
+            if wbs_filter == "Ohne WBS" and listing_wbs:
+                continue
+            if wbs_filter == "Mit WBS" and not listing_wbs:
+                continue
+
+            wbs_label = "🔑 WBS erforderlich" if listing_wbs else "✅ Kein WBS"
 
             msg = (
                 f"🏠 *Neue Wohnung!*\n\n"
@@ -205,6 +239,7 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
                 f"🚪 {listing.get('zimmer', '?')} Zimmer\n"
                 f"💶 {listing.get('preis', '?')}€ warm\n"
                 f"📐 {listing.get('groesse', '?')}\n"
+                f"📋 {wbs_label}\n"
                 f"🏢 {listing.get('anbieter', '?')}\n\n"
                 f"🔗 [Zur Wohnung]({listing.get('url', '')})"
             )
@@ -229,6 +264,7 @@ def main():
             BEZIRK: [CallbackQueryHandler(bezirk_callback, pattern="^bezirk_")],
             BUDGET: [CallbackQueryHandler(budget_callback, pattern="^budget_")],
             ZIMMER: [CallbackQueryHandler(zimmer_callback, pattern="^zimmer_")],
+            WBS: [CallbackQueryHandler(wbs_callback, pattern="^wbs_")],
         },
         fallbacks=[CommandHandler("start", start)],
     )
