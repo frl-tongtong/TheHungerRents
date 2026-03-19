@@ -27,6 +27,7 @@ def parse_zimmer(text):
 
 async def scrape_degewo():
     listings = []
+    stadt = "Berlin"
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             response = await client.get(
@@ -64,11 +65,11 @@ async def scrape_degewo():
                             groesse_text = text
 
                     # Bezirk aus "Straße | Bezirk"
-                    bezirk = "Berlin"
+                    bezirk = stadt
                     if meta_el:
                         meta_text = meta_el.get_text(strip=True)
                         if "|" in meta_text:
-                            bezirk = meta_text.split("|")[-1].strip()
+                            bezirk = meta_text.split("|")[-1].strip()+ f", {stadt}"
 
                     # URL
                     url = link_el["href"] if link_el else "https://www.degewo.de/immosuche"
