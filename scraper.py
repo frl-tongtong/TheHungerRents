@@ -40,19 +40,11 @@ async def scrape_degewo():
 
             for item in items:
                 try:
-                    # Titel: h2.article_title
                     title_el = item.select_one("h2.article__title")
-
-                    # Adresse: span.article_meta → "Straße | Bezirk"
                     meta_el = item.select_one("span.article__meta")
-
-                    # Preis: div.article__price-tag
                     preis_el = item.select_one("div.article__price-tag")
-
-                    # Link
                     link_el = item.select_one("a[href]")
 
-                    # Zimmer + Größe aus span.text
                     all_spans = item.select("span.text")
                     span_texts = [s.get_text(strip=True) for s in all_spans]
 
@@ -69,18 +61,14 @@ async def scrape_degewo():
                     if meta_el:
                         meta_text = meta_el.get_text(strip=True)
                         if "|" in meta_text:
-                            bezirk = meta_text.split("|")[-1].strip()+ f", {stadt}"
+                            bezirk = meta_text.split("|")[-1].strip() + f", {stadt}"
 
-                    # URL
                     url = link_el["href"] if link_el else "https://www.degewo.de/immosuche"
                     if url and not url.startswith("http"):
                         url = "https://www.degewo.de" + url
 
-                    # Echter Titel aus h2
-                    titel = title_el.get_text(strip=True) if title_el else "Degewo Wohnung"
-
                     listing = {
-                        "titel": titel,
+                        "titel": title_el.get_text(strip=True) if title_el else "Degewo Wohnung",
                         "preis": parse_preis(preis_el.get_text() if preis_el else None),
                         "zimmer": parse_zimmer(zimmer_text),
                         "groesse": groesse_text or "?",
@@ -98,6 +86,65 @@ async def scrape_degewo():
     return listings
 
 
+async def scrape_wbm():
+    listings = []
+    stadt = "Berlin"
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            response = await client.get(
+                "https://www.wbm.de/wohnungen-berlin/angebote/",
+                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+            )
+            soup = BeautifulSoup(response.text, "html.parser")
+            items = soup.select("div.row.openimmo-search-list-item")
+            logger.info(f"wbm: found {len(items)} raw items")
+
+            for item in items:
+                try:
+                    # Titel + Details aus article.immo-element
+                    immo = item.select_one("article.immo-element")
+                    if not immo:
+                        continue
+
+                    title_el = immo.select_one("h2.imageTitle")
+                    address_el = immo.select_one("div.address")
+                    preis_el = immo.select_one("div.main-property-rent")
+                    groesse_el = immo.select_one("div.main-property-size")
+                    zimmer_el = immo.select_one("div.main-property-rooms")
+
+                    # Link aus tooltip div
+                    data_uid = item.get("data-uid")
+                    link_el = item.select_one(f"div#immobilie-list-item-tooltip-{data_uid} a[href]")
+                    if not link_el:
+                        link_el = item.select_one("a[href]")
+
+                    # Bezirk aus div.area
+                    bezirk_el = item.select_one("div.area")
+                    bezirk = (bezirk_el.get_text(strip=True) + f", {stadt}") if bezirk_el else stadt
+
+                    url = link_el["href"] if link_el else "https://www.wbm.de/wohnungen-berlin/angebote/"
+                    if url and not url.startswith("http"):
+                        url = "https://www.wbm.de" + url
+
+                    listing = {
+                        "titel": title_el.get_text(strip=True) if title_el else "WBM Wohnung",
+                        "preis": parse_preis(preis_el.get_text() if preis_el else None),
+                        "zimmer": parse_zimmer(zimmer_el.get_text() if zimmer_el else None),
+                        "groesse": groesse_el.get_text(strip=True) if groesse_el else "?",
+                        "bezirk": bezirk,
+                        "url": url,
+                        "anbieter": "WBM",
+                        "source": "wbm"
+                    }
+                    listings.append(listing)
+                    logger.info(f"wbm parsed: {listing['titel']} | {listing['zimmer']} Zimmer | {listing['groesse']} | {listing['preis']}€ | {listing['bezirk']}")
+                except Exception as e:
+                    logger.warning(f"Error parsing wbm item: {e}")
+    except Exception as e:
+        logger.error(f"Error scraping wbm: {e}")
+    return listings
+
+
 async def run_scraper(supabase_url, supabase_key):
     headers = {
         "apikey": supabase_key,
@@ -108,6 +155,7 @@ async def run_scraper(supabase_url, supabase_key):
 
     all_listings = []
     all_listings += await scrape_degewo()
+    all_listings += await scrape_wbm()
     logger.info(f"Found {len(all_listings)} total listings")
 
     new_listings = []
