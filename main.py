@@ -204,7 +204,7 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
                 f"📍 {listing.get('bezirk', '?')}\n"
                 f"🚪 {listing.get('zimmer', '?')} Zimmer\n"
                 f"💶 {listing.get('preis', '?')}€ warm\n"
-                f"📐 {listing.get('groesse', '?')} m²\n"
+                f"📐 {listing.get('groesse', '?')}\n"
                 f"🏢 {listing.get('anbieter', '?')}\n\n"
                 f"🔗 [Zur Wohnung]({listing.get('url', '')})"
             )
