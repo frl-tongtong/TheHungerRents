@@ -43,7 +43,7 @@ async def scrape_degewo():
                     title_el = item.select_one("h2.article__title")
 
                     # Adresse: span.article_meta → "Straße | Bezirk"
-                    meta_el = item.select_one("span.article_meta")
+                    meta_el = item.select_one("span.article__meta")
 
                     # Preis: div.article__price-tag
                     preis_el = item.select_one("div.article__price-tag")
