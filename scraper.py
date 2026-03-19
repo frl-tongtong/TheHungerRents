@@ -9,10 +9,11 @@ logger = logging.getLogger(__name__)
 def parse_preis(text):
     if not text:
         return None
-    match = re.search(r'(\d+[\.,]?\d*)', text.replace('.', '').replace(',', '.'))
+    cleaned = re.sub(r'[^\d,.]', '', text.replace('.', '').replace(',', '.'))
+    match = re.search(r'(\d+)', cleaned)
     if match:
         try:
-            return int(float(match.group(1)))
+            return int(match.group(1))
         except:
             return None
     return None
@@ -36,8 +37,6 @@ async def scrape_degewo():
                 headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
             )
             soup = BeautifulSoup(response.text, "html.parser")
-
-            # Each listing is an <article class="article-list__item">
             items = soup.select("article.article-list__item")
             logger.info(f"degewo: found {len(items)} raw items")
 
@@ -49,12 +48,19 @@ async def scrape_degewo():
                     # Address: "Straße | Bezirk"
                     meta_el = item.select_one("span.article_meta")
 
-                    # Properties: Zimmer, Größe
-                    prop_items = item.select("ul.article_properties li.article__properties-item span.text")
-                    zimmer_text = prop_items[0].get_text(strip=True) if len(prop_items) > 0 else None
-                    groesse_text = prop_items[1].get_text(strip=True) if len(prop_items) > 1 else None
+                    # Properties: each li has an svg icon + span with class "text"
+                    # "1 Zimmer", "45,45 m²", "ab sofort"
+                    prop_spans = item.select("ul.article_properties li span.text")
+                    zimmer_text = None
+                    groesse_text = None
+                    for span in prop_spans:
+                        t = span.get_text(strip=True)
+                        if "Zimmer" in t:
+                            zimmer_text = t
+                        elif "m²" in t:
+                            groesse_text = t
 
-                    # Price
+                    # Price: div.article__price-tag – contains "422,61 €"
                     preis_el = item.select_one("div.article__price-tag")
 
                     # Link
@@ -82,6 +88,7 @@ async def scrape_degewo():
                         "source": "degewo"
                     }
                     listings.append(listing)
+                    logger.info(f"degewo parsed: {listing['titel']} | {listing['zimmer']} Zimmer | {listing['groesse']} | {listing['preis']}€ | {listing['bezirk']}")
                 except Exception as e:
                     logger.warning(f"Error parsing degewo item: {e}")
     except Exception as e:
@@ -90,7 +97,6 @@ async def scrape_degewo():
 
 
 async def run_scraper(supabase_url, supabase_key):
-    """Main scraper - runs all scrapers and returns only NEW listings."""
     headers = {
         "apikey": supabase_key,
         "Authorization": f"Bearer {supabase_key}",
@@ -100,7 +106,6 @@ async def run_scraper(supabase_url, supabase_key):
 
     all_listings = []
     all_listings += await scrape_degewo()
-
     logger.info(f"Found {len(all_listings)} total listings")
 
     new_listings = []
