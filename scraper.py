@@ -156,27 +156,32 @@ async def scrape_howoge():
     listings = []
     stadt = "Berlin"
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            response = await client.get(
-"https://www.howoge.de/immobiliensuche/wohnungssuche.html",
-                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        from playwright.async_api import async_playwright
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto(
+                "https://www.howoge.de/immobiliensuche/wohnungssuche.html",
+                wait_until="networkidle",
+                timeout=60000
             )
-            soup = BeautifulSoup(response.text, "html.parser")
+            await page.wait_for_selector("div.flat-single-grid-item", timeout=30000)
+            html = await page.content()
+            await browser.close()
+
+            soup = BeautifulSoup(html, "html.parser")
             items = soup.select("div.flat-single-grid-item")
             logger.info(f"howoge: found {len(items)} raw items")
 
             for item in items:
                 try:
-                    # Titel
                     notice_el = item.select_one("div.notice")
                     titel = notice_el.get_text(strip=True) if notice_el else "HOWOGE Wohnung"
 
-                    # Link + Adresse
                     link_el = item.select_one("a.flat-single--link")
                     address_el = item.select_one("div.address")
                     adresse = address_el.get_text(strip=True) if address_el else ""
 
-                    # Bezirk aus Adresse – Format: "Straße, PLZ Stadt, Ortsteil"
                     bezirk = stadt
                     if adresse and "," in adresse:
                         parts = adresse.split(",")
@@ -185,7 +190,6 @@ async def scrape_howoge():
                         elif len(parts) == 2:
                             bezirk = parts[-1].strip() + f", {stadt}"
 
-                    # Preis, Größe, Zimmer aus attributes
                     preis = None
                     groesse = "?"
                     zimmer = None
@@ -199,15 +203,14 @@ async def scrape_howoge():
                             c = content.get_text(strip=True)
                             if "Warmmiete" in h:
                                 preis = parse_preis(c)
-                            elif "Wohnfläche" in h or "fläche" in h.lower():
+                            elif "fläche" in h.lower():
                                 groesse = c
                             elif "Zimmer" in h:
                                 zimmer = parse_zimmer(c)
 
-                    # WBS aus features
                     features = [f.get_text(strip=True) for f in item.select("div.feature")]
 
-                    url = link_el["href"] if link_el else "https://www.howoge.de/wohnungen-gewerbe/wohnungsangebote.html"
+                    url = link_el["href"] if link_el else "https://www.howoge.de/immobiliensuche/wohnungssuche.html"
                     if url and not url.startswith("http"):
                         url = "https://www.howoge.de" + url
 
