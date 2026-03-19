@@ -102,7 +102,7 @@ async def scrape_wbm():
             for item in items:
                 try:
                     # Titel + Details aus article.immo-element
-                    immo = item.select_one("article.immo-element")
+                    immo = item.select_one("article.immo-element:not(.teaserBox)")
                     if not immo:
                         continue
 
