@@ -233,6 +233,79 @@ async def scrape_howoge():
     return listings
 
 
+
+async def scrape_gewobag():
+    listings = []
+    stadt = "Berlin"
+    try:
+        from playwright.async_api import async_playwright
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto(
+                "https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/wohnung/",
+                wait_until="networkidle",
+                timeout=60000
+            )
+            await page.wait_for_selector("article.angebot-big-box", timeout=30000)
+            html = await page.content()
+            await browser.close()
+
+            soup = BeautifulSoup(html, "html.parser")
+            items = soup.select("article.angebot-big-box.gw-offer")
+            logger.info(f"gewobag: found {len(items)} raw items")
+
+            for item in items:
+                try:
+                    title_el = item.select_one("h3.angebot-title")
+                    titel = title_el.get_text(strip=True) if title_el else "Gewobag Wohnung"
+
+                    address_el = item.select_one("tr.angebot-address address")
+                    adresse = address_el.get_text(strip=True) if address_el else ""
+                    bezirk = stadt
+                    if adresse and "/" in adresse:
+                        bezirk = adresse.split("/")[-1].strip() + f", {stadt}"
+                    elif adresse and "," in adresse:
+                        bezirk = adresse.split(",")[-1].strip() + f", {stadt}"
+
+                    area_el = item.select_one("tr.angebot-area td:not(th)")
+                    zimmer = None
+                    groesse = "?"
+                    if area_el:
+                        area_text = area_el.get_text(strip=True)
+                        if "|" in area_text:
+                            parts = area_text.split("|")
+                            zimmer = parse_zimmer(parts[0])
+                            groesse = parts[1].strip() if len(parts) > 1 else "?"
+                        else:
+                            groesse = area_text
+
+                    preis_el = item.select_one("tr.angebot-kosten td:not(th)")
+                    preis = parse_preis(preis_el.get_text() if preis_el else None)
+
+                    link_el = item.select_one("a[href]")
+                    url = link_el["href"] if link_el else "https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/wohnung/"
+                    if url and not url.startswith("http"):
+                        url = "https://www.gewobag.de" + url
+
+                    listing = {
+                        "titel": titel,
+                        "preis": preis,
+                        "zimmer": zimmer,
+                        "groesse": groesse,
+                        "bezirk": bezirk,
+                        "wbs": parse_wbs(titel),
+                        "url": url,
+                        "anbieter": "Gewobag",
+                    }
+                    listings.append(listing)
+                    logger.info(f"gewobag parsed: {listing['titel']} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']} | {listing['bezirk']}")
+                except Exception as e:
+                    logger.warning(f"Error parsing gewobag item: {e}")
+    except Exception as e:
+        logger.error(f"Error scraping gewobag: {e}")
+    return listings
+
 async def run_scraper(supabase_url, supabase_key):
     headers = {
         "apikey": supabase_key,
@@ -245,6 +318,7 @@ async def run_scraper(supabase_url, supabase_key):
     all_listings += await scrape_degewo()
     all_listings += await scrape_wbm()
     all_listings += await scrape_howoge()
+    all_listings += await scrape_gewobag()
     logger.info(f"Found {len(all_listings)} total listings")
 
     new_listings = []
