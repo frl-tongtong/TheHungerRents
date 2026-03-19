@@ -271,7 +271,7 @@ def main():
 
     app.add_handler(conv)
     app.add_handler(CommandHandler("pause", pause))
-    app.job_queue.run_repeating(scraper_job, interval=900, first=10)
+    app.job_queue.run_repeating(scraper_job, interval=120, first=10)
 
     logger.info("TheHungerRents is running 🏹")
     app.run_polling()
