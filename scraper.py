@@ -25,6 +25,17 @@ def parse_zimmer(text):
     return None
 
 
+def parse_wbs(titel, features=None):
+    """Check if WBS is required from title or features list."""
+    if titel and "WBS" in titel.upper():
+        return True
+    if features:
+        for f in features:
+            if "WBS" in f.upper():
+                return True
+    return False
+
+
 async def scrape_degewo():
     listings = []
     stadt = "Berlin"
@@ -56,29 +67,30 @@ async def scrape_degewo():
                         elif "m" in text and any(c.isdigit() for c in text):
                             groesse_text = text
 
-                    # Bezirk aus "Straße | Bezirk"
                     bezirk = stadt
                     if meta_el:
                         meta_text = meta_el.get_text(strip=True)
                         if "|" in meta_text:
                             bezirk = meta_text.split("|")[-1].strip() + f", {stadt}"
 
+                    titel = title_el.get_text(strip=True) if title_el else "Degewo Wohnung"
+
                     url = link_el["href"] if link_el else "https://www.degewo.de/immosuche"
                     if url and not url.startswith("http"):
                         url = "https://www.degewo.de" + url
 
                     listing = {
-                        "titel": title_el.get_text(strip=True) if title_el else "Degewo Wohnung",
+                        "titel": titel,
                         "preis": parse_preis(preis_el.get_text() if preis_el else None),
                         "zimmer": parse_zimmer(zimmer_text),
                         "groesse": groesse_text or "?",
                         "bezirk": bezirk,
+                        "wbs": parse_wbs(titel),
                         "url": url,
                         "anbieter": "degewo",
-                        "source": "degewo"
                     }
                     listings.append(listing)
-                    logger.info(f"degewo parsed: {listing['titel']} | {listing['zimmer']} Zimmer | {listing['groesse']} | {listing['preis']}€ | {listing['bezirk']}")
+                    logger.info(f"degewo parsed: {listing['titel']} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']} | {listing['bezirk']}")
                 except Exception as e:
                     logger.warning(f"Error parsing degewo item: {e}")
     except Exception as e:
@@ -101,47 +113,120 @@ async def scrape_wbm():
 
             for item in items:
                 try:
-                    # Titel + Details aus article.immo-element
                     immo = item.select_one("article.immo-element:not(.teaserBox)")
                     if not immo:
                         continue
 
                     title_el = immo.select_one("h2.imageTitle")
-                    address_el = immo.select_one("div.address")
                     preis_el = immo.select_one("div.main-property-value.main-property-rent")
                     groesse_el = immo.select_one("div.main-property-value.main-property-size")
                     zimmer_el = immo.select_one("div.main-property-value.main-property-rooms")
+                    features = [li.get_text(strip=True) for li in immo.select("ul.check-property-list li")]
 
-                    # Link aus tooltip div
-                    data_uid = item.get("data-uid")
-                    link_el = item.select_one(f"div#immobilie-list-item-tooltip-{data_uid} a[href]")
-                    if not link_el:
-                        link_el = item.select_one("a[href]")
-
-                    # Bezirk aus div.area
+                    link_el = immo.select_one("a.immo-button-cta[href]")
                     bezirk_el = item.select_one("div.area")
                     bezirk = (bezirk_el.get_text(strip=True) + f", {stadt}") if bezirk_el else stadt
+
+                    titel = title_el.get_text(strip=True) if title_el else "WBM Wohnung"
 
                     url = link_el["href"] if link_el else "https://www.wbm.de/wohnungen-berlin/angebote/"
                     if url and not url.startswith("http"):
                         url = "https://www.wbm.de" + url
 
                     listing = {
-                        "titel": title_el.get_text(strip=True) if title_el else "WBM Wohnung",
+                        "titel": titel,
                         "preis": parse_preis(preis_el.get_text() if preis_el else None),
                         "zimmer": parse_zimmer(zimmer_el.get_text() if zimmer_el else None),
                         "groesse": groesse_el.get_text(strip=True) if groesse_el else "?",
                         "bezirk": bezirk,
+                        "wbs": parse_wbs(titel, features),
                         "url": url,
                         "anbieter": "WBM",
-                        "source": "wbm"
                     }
                     listings.append(listing)
-                    logger.info(f"wbm parsed: {listing['titel']} | {listing['zimmer']} Zimmer | {listing['groesse']} | {listing['preis']}€ | {listing['bezirk']}")
+                    logger.info(f"wbm parsed: {listing['titel']} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']} | {listing['bezirk']}")
                 except Exception as e:
                     logger.warning(f"Error parsing wbm item: {e}")
     except Exception as e:
         logger.error(f"Error scraping wbm: {e}")
+    return listings
+
+
+async def scrape_howoge():
+    listings = []
+    stadt = "Berlin"
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            response = await client.get(
+                "https://www.howoge.de/wohnungen-gewerbe/wohnungsangebote.html",
+                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+            )
+            soup = BeautifulSoup(response.text, "html.parser")
+            items = soup.select("div.flat-single-grid-item")
+            logger.info(f"howoge: found {len(items)} raw items")
+
+            for item in items:
+                try:
+                    # Titel
+                    notice_el = item.select_one("div.notice")
+                    titel = notice_el.get_text(strip=True) if notice_el else "HOWOGE Wohnung"
+
+                    # Link + Adresse
+                    link_el = item.select_one("a.flat-single--link")
+                    address_el = item.select_one("div.address")
+                    adresse = address_el.get_text(strip=True) if address_el else ""
+
+                    # Bezirk aus Adresse – Format: "Straße, PLZ Stadt, Ortsteil"
+                    bezirk = stadt
+                    if adresse and "," in adresse:
+                        parts = adresse.split(",")
+                        if len(parts) >= 3:
+                            bezirk = parts[-1].strip() + f", {stadt}"
+                        elif len(parts) == 2:
+                            bezirk = parts[-1].strip() + f", {stadt}"
+
+                    # Preis, Größe, Zimmer aus attributes
+                    preis = None
+                    groesse = "?"
+                    zimmer = None
+
+                    attr_blocks = item.select("div.attributes > div")
+                    for block in attr_blocks:
+                        headline = block.select_one("div.attributes-headline")
+                        content = block.select_one("div.attributes-content")
+                        if headline and content:
+                            h = headline.get_text(strip=True)
+                            c = content.get_text(strip=True)
+                            if "Warmmiete" in h:
+                                preis = parse_preis(c)
+                            elif "Wohnfläche" in h or "fläche" in h.lower():
+                                groesse = c
+                            elif "Zimmer" in h:
+                                zimmer = parse_zimmer(c)
+
+                    # WBS aus features
+                    features = [f.get_text(strip=True) for f in item.select("div.feature")]
+
+                    url = link_el["href"] if link_el else "https://www.howoge.de/wohnungen-gewerbe/wohnungsangebote.html"
+                    if url and not url.startswith("http"):
+                        url = "https://www.howoge.de" + url
+
+                    listing = {
+                        "titel": titel,
+                        "preis": preis,
+                        "zimmer": zimmer,
+                        "groesse": groesse,
+                        "bezirk": bezirk,
+                        "wbs": parse_wbs(titel, features),
+                        "url": url,
+                        "anbieter": "HOWOGE",
+                    }
+                    listings.append(listing)
+                    logger.info(f"howoge parsed: {listing['titel']} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']} | {listing['bezirk']}")
+                except Exception as e:
+                    logger.warning(f"Error parsing howoge item: {e}")
+    except Exception as e:
+        logger.error(f"Error scraping howoge: {e}")
     return listings
 
 
@@ -156,6 +241,7 @@ async def run_scraper(supabase_url, supabase_key):
     all_listings = []
     all_listings += await scrape_degewo()
     all_listings += await scrape_wbm()
+    all_listings += await scrape_howoge()
     logger.info(f"Found {len(all_listings)} total listings")
 
     new_listings = []
