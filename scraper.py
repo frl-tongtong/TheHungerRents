@@ -9,14 +9,11 @@ logger = logging.getLogger(__name__)
 def parse_preis(text):
     if not text:
         return None
-    cleaned = re.sub(r'[^\d,.]', '', text.replace('.', '').replace(',', '.'))
-    match = re.search(r'(\d+)', cleaned)
-    if match:
-        try:
-            return int(match.group(1))
-        except:
-            return None
-    return None
+    cleaned = re.sub(r'[^\d]', '', text.replace('.', '').split(',')[0])
+    try:
+        return int(cleaned) if cleaned else None
+    except:
+        return None
 
 
 def parse_zimmer(text):
@@ -42,31 +39,26 @@ async def scrape_degewo():
 
             for item in items:
                 try:
-                    # Title
                     title_el = item.select_one("h2.article_title")
-
-                    # Address: "Straße | Bezirk"
                     meta_el = item.select_one("span.article_meta")
-
-                    # Properties: each li has an svg icon + span with class "text"
-                    # "1 Zimmer", "45,45 m²", "ab sofort"
-                    prop_spans = item.select("ul.article_properties li span.text")
-                    zimmer_text = None
-                    groesse_text = None
-                    for span in prop_spans:
-                        t = span.get_text(strip=True)
-                        if "Zimmer" in t:
-                            zimmer_text = t
-                        elif "m²" in t:
-                            groesse_text = t
-
-                    # Price: div.article__price-tag – contains "422,61 €"
                     preis_el = item.select_one("div.article__price-tag")
-
-                    # Link
                     link_el = item.select_one("a[href]")
 
-                    # Parse Bezirk from "Straße | Bezirk"
+                    # Get ALL span.text elements and log them for debugging
+                    all_spans = item.select("span.text")
+                    span_texts = [s.get_text(strip=True) for s in all_spans]
+                    logger.info(f"degewo spans found: {span_texts}")
+
+                    # Find Zimmer and Größe from all spans
+                    zimmer_text = None
+                    groesse_text = None
+                    for text in span_texts:
+                        if "Zimmer" in text:
+                            zimmer_text = text
+                        elif "m" in text and any(c.isdigit() for c in text):
+                            groesse_text = text
+
+                    # Parse Bezirk
                     bezirk = "Berlin"
                     if meta_el:
                         meta_text = meta_el.get_text(strip=True)
