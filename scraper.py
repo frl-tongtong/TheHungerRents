@@ -39,17 +39,22 @@ async def scrape_degewo():
 
             for item in items:
                 try:
-                    title_el = item.select_one("h2.article_title")
+                    # Titel: h2.article_title
+                    title_el = item.select_one("h2.article__title")
+
+                    # Adresse: span.article_meta → "Straße | Bezirk"
                     meta_el = item.select_one("span.article_meta")
+
+                    # Preis: div.article__price-tag
                     preis_el = item.select_one("div.article__price-tag")
+
+                    # Link
                     link_el = item.select_one("a[href]")
 
-                    # Get ALL span.text elements and log them for debugging
+                    # Zimmer + Größe aus span.text
                     all_spans = item.select("span.text")
                     span_texts = [s.get_text(strip=True) for s in all_spans]
-                    logger.info(f"degewo spans found: {span_texts}")
 
-                    # Find Zimmer and Größe from all spans
                     zimmer_text = None
                     groesse_text = None
                     for text in span_texts:
@@ -58,19 +63,23 @@ async def scrape_degewo():
                         elif "m" in text and any(c.isdigit() for c in text):
                             groesse_text = text
 
-                    # Parse Bezirk
+                    # Bezirk aus "Straße | Bezirk"
                     bezirk = "Berlin"
                     if meta_el:
                         meta_text = meta_el.get_text(strip=True)
                         if "|" in meta_text:
                             bezirk = meta_text.split("|")[-1].strip()
 
+                    # URL
                     url = link_el["href"] if link_el else "https://www.degewo.de/immosuche"
                     if url and not url.startswith("http"):
                         url = "https://www.degewo.de" + url
 
+                    # Echter Titel aus h2
+                    titel = title_el.get_text(strip=True) if title_el else "Degewo Wohnung"
+
                     listing = {
-                        "titel": title_el.get_text(strip=True) if title_el else "Degewo Wohnung",
+                        "titel": titel,
                         "preis": parse_preis(preis_el.get_text() if preis_el else None),
                         "zimmer": parse_zimmer(zimmer_text),
                         "groesse": groesse_text or "?",
