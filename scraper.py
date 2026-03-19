@@ -108,9 +108,9 @@ async def scrape_wbm():
 
                     title_el = immo.select_one("h2.imageTitle")
                     address_el = immo.select_one("div.address")
-                    preis_el = immo.select_one("div.main-property-rent")
-                    groesse_el = immo.select_one("div.main-property-size")
-                    zimmer_el = immo.select_one("div.main-property-rooms")
+                    preis_el = immo.select_one("div.main-property-value.main-property-rent")
+                    groesse_el = immo.select_one("div.main-property-value.main-property-size")
+                    zimmer_el = immo.select_one("div.main-property-value.main-property-rooms")
 
                     # Link aus tooltip div
                     data_uid = item.get("data-uid")
