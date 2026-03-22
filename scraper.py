@@ -166,11 +166,11 @@ async def scrape_howoge():
                 timeout=60000
             )
             # Cookie Banner wegklicken falls vorhanden
-try:
-    await page.click("button.cookie-accept, #cookie-accept, .cookie-consent button", timeout=5000)
-except:
-    pass
-await page.wait_for_selector("article.angebot-big-box", timeout=60000)
+            try:
+                await page.click("button.cookie-accept, #cookie-accept, .cookie-consent button", timeout=5000)
+            except:
+                pass
+            await page.wait_for_selector("article.angebot-big-box", timeout=60000)
             html = await page.content()
             await browser.close()
 
@@ -236,7 +236,6 @@ await page.wait_for_selector("article.angebot-big-box", timeout=60000)
     except Exception as e:
         logger.error(f"Error scraping howoge: {e}")
     return listings
-
 
 
 async def scrape_gewobag():
@@ -310,6 +309,7 @@ async def scrape_gewobag():
     except Exception as e:
         logger.error(f"Error scraping gewobag: {e}")
     return listings
+
 
 async def run_scraper(supabase_url, supabase_key):
     headers = {
