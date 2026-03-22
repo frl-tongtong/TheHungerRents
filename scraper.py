@@ -167,16 +167,51 @@ async def scrape_howoge():
             )
             # Cookie Banner wegklicken falls vorhanden
             try:
-                await page.click("button.cookie-accept, #cookie-accept, .cookie-consent button", timeout=5000)
+                await page.click("button.cookie-accept, #cookie-accept, .cookie-consent button, [data-cookie-accept], .cc-btn", timeout=5000)
             except:
                 pass
-            await page.wait_for_selector("article.angebot-big-box", timeout=60000)
+
+            # HOWOGE lädt Listings per JS nach — "Filter anwenden" klicken
+            try:
+                await page.click("button:has-text('Filter anwenden')", timeout=5000)
+            except:
+                pass
+
+            # Auf die tatsächlichen HOWOGE-Listing-Elemente warten
+            try:
+                await page.wait_for_selector("div.flat-single-grid-item", timeout=30000)
+            except:
+                # Fallback: vielleicht anderer Selektor nach Redesign
+                logger.warning("howoge: flat-single-grid-item not found, trying alternatives...")
+                try:
+                    await page.wait_for_selector("[class*='flat-single'], [class*='immo-element'], article.listing", timeout=15000)
+                except:
+                    logger.warning("howoge: no listing elements found at all")
+
             html = await page.content()
             await browser.close()
 
             soup = BeautifulSoup(html, "html.parser")
             items = soup.select("div.flat-single-grid-item")
             logger.info(f"howoge: found {len(items)} raw items")
+
+            # Debug: wenn keine Items, zeig was auf der Seite ist
+            if not items:
+                # Versuch alternative Selektoren
+                alt_selectors = [
+                    "div[class*='flat']",
+                    "article[class*='angebot']",
+                    "div[class*='listing']",
+                    "div[class*='search-result']",
+                ]
+                for sel in alt_selectors:
+                    alt_items = soup.select(sel)
+                    if alt_items:
+                        logger.info(f"howoge: alternative selector '{sel}' found {len(alt_items)} items")
+                        break
+                # Log page title to verify we're on the right page
+                title_tag = soup.select_one("title")
+                logger.info(f"howoge: page title = '{title_tag.get_text() if title_tag else 'unknown'}'")
 
             for item in items:
                 try:
