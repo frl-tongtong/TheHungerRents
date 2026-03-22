@@ -276,71 +276,130 @@ async def scrape_howoge():
 async def scrape_gewobag():
     listings = []
     stadt = "Berlin"
+    base_url = "https://www.gewobag.de/fuer-mietinteressentinnen/suche/wohnung/"
     try:
-        from playwright.async_api import async_playwright
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            await page.goto(
-                "https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/wohnung/",
-                wait_until="networkidle",
-                timeout=60000
-            )
-            await page.wait_for_selector("article.angebot-big-box", timeout=30000)
-            html = await page.content()
-            await browser.close()
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            # Seite 1 laden (und ggf. weitere Seiten)
+            page_num = 1
+            max_pages = 5
+            while page_num <= max_pages:
+                params = {
+                    "gesamtmiete_von": "",
+                    "gesamtmiete_bis": "",
+                    "gesamtflaeche_von": "",
+                    "gesamtflaeche_bis": "",
+                    "zimmer_von": "",
+                    "zimmer_bis": "",
+                    "sort-by": "",
+                }
+                if page_num > 1:
+                    params["seite"] = str(page_num)
 
-            soup = BeautifulSoup(html, "html.parser")
-            items = soup.select("article.angebot-big-box.gw-offer")
-            logger.info(f"gewobag: found {len(items)} raw items")
-
-            for item in items:
-                try:
-                    title_el = item.select_one("h3.angebot-title")
-                    titel = title_el.get_text(strip=True) if title_el else "Gewobag Wohnung"
-
-                    address_el = item.select_one("tr.angebot-address address")
-                    adresse = address_el.get_text(strip=True) if address_el else ""
-                    bezirk = stadt
-                    if adresse and "/" in adresse:
-                        bezirk = adresse.split("/")[-1].strip() + f", {stadt}"
-                    elif adresse and "," in adresse:
-                        bezirk = adresse.split(",")[-1].strip() + f", {stadt}"
-
-                    area_el = item.select_one("tr.angebot-area td:not(th)")
-                    zimmer = None
-                    groesse = "?"
-                    if area_el:
-                        area_text = area_el.get_text(strip=True)
-                        if "|" in area_text:
-                            parts = area_text.split("|")
-                            zimmer = parse_zimmer(parts[0])
-                            groesse = parts[1].strip() if len(parts) > 1 else "?"
-                        else:
-                            groesse = area_text
-
-                    preis_el = item.select_one("tr.angebot-kosten td:not(th)")
-                    preis = parse_preis(preis_el.get_text() if preis_el else None)
-
-                    link_el = item.select_one("a[href]")
-                    url = link_el["href"] if link_el else "https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/wohnung/"
-                    if url and not url.startswith("http"):
-                        url = "https://www.gewobag.de" + url
-
-                    listing = {
-                        "titel": titel,
-                        "preis": preis,
-                        "zimmer": zimmer,
-                        "groesse": groesse,
-                        "bezirk": bezirk,
-                        "wbs": parse_wbs(titel),
-                        "url": url,
-                        "anbieter": "Gewobag",
+                response = await client.get(
+                    base_url,
+                    params=params,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                        "Accept": "text/html,application/xhtml+xml",
+                        "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
                     }
-                    listings.append(listing)
-                    logger.info(f"gewobag parsed: {listing['titel']} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']} | {listing['bezirk']}")
-                except Exception as e:
-                    logger.warning(f"Error parsing gewobag item: {e}")
+                )
+                logger.info(f"gewobag: page {page_num} status {response.status_code}, {len(response.text)} bytes")
+
+                if response.status_code != 200:
+                    logger.warning(f"gewobag: page {page_num} returned {response.status_code}")
+                    break
+
+                soup = BeautifulSoup(response.text, "html.parser")
+                items = soup.select("article.angebot-big-box.gw-offer")
+                if not items:
+                    items = soup.select("article.angebot-big-box")
+                logger.info(f"gewobag: page {page_num} found {len(items)} items")
+
+                if not items:
+                    break
+
+                for item in items:
+                    try:
+                        title_el = item.select_one("h3.angebot-title")
+                        titel = title_el.get_text(strip=True) if title_el else "Gewobag Wohnung"
+
+                        # Bezirk aus angebot-region (zuverlässiger)
+                        region_el = item.select_one("tr.angebot-region td")
+                        bezirk_name = region_el.get_text(strip=True) if region_el else ""
+
+                        # Adresse für mehr Kontext
+                        address_el = item.select_one("tr.angebot-address address")
+                        adresse = address_el.get_text(strip=True) if address_el else ""
+
+                        # Bezirk zusammenbauen
+                        if bezirk_name:
+                            bezirk = f"{bezirk_name}, {stadt}"
+                        elif adresse and "/" in adresse:
+                            bezirk = adresse.split("/")[-1].strip() + f", {stadt}"
+                        else:
+                            bezirk = stadt
+
+                        # PLZ aus Adresse extrahieren
+                        plz = ""
+                        plz_match = re.search(r'(\d{5})', adresse)
+                        if plz_match:
+                            plz = plz_match.group(1)
+
+                        # Zimmer und Fläche
+                        area_el = item.select_one("tr.angebot-area td:not(th)")
+                        zimmer = None
+                        groesse = "?"
+                        if area_el:
+                            area_text = area_el.get_text(strip=True)
+                            if "|" in area_text:
+                                parts = area_text.split("|")
+                                zimmer = parse_zimmer(parts[0])
+                                groesse = parts[1].strip() if len(parts) > 1 else "?"
+                            else:
+                                groesse = area_text
+
+                        # Gesamtmiete (= Warmmiete)
+                        preis_el = item.select_one("tr.angebot-kosten td:not(th)")
+                        preis = parse_preis(preis_el.get_text() if preis_el else None)
+
+                        # Features/Eigenschaften
+                        features = [li.get_text(strip=True) for li in item.select("tr.angebot-characteristics li")]
+
+                        # Link
+                        link_el = item.select_one("div.angebot-footer a.read-more-link")
+                        if not link_el:
+                            link_el = item.select_one("a[href*='mietangebote']")
+                        url = link_el["href"] if link_el else ""
+                        if url and not url.startswith("http"):
+                            url = "https://www.gewobag.de" + url
+
+                        listing = {
+                            "titel": titel,
+                            "preis": preis,
+                            "zimmer": zimmer,
+                            "groesse": groesse,
+                            "bezirk": bezirk,
+                            "plz": plz,
+                            "wbs": parse_wbs(titel, features),
+                            "url": url,
+                            "anbieter": "Gewobag",
+                        }
+                        listings.append(listing)
+                        logger.info(f"gewobag parsed: {listing['titel'][:60]} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']} | {listing['bezirk']}")
+                    except Exception as e:
+                        logger.warning(f"Error parsing gewobag item: {e}")
+
+                # Nächste Seite?
+                next_link = soup.select_one("a.next, a[rel='next'], a:has-text('Weiter')")
+                if not next_link:
+                    # Alternativ: Pagination-Links prüfen
+                    page_links = soup.select("nav.pagination a, .pagination a")
+                    has_next = any(str(page_num + 1) in (a.get_text(strip=True)) for a in page_links)
+                    if not has_next:
+                        break
+                page_num += 1
+
     except Exception as e:
         logger.error(f"Error scraping gewobag: {e}")
     return listings
