@@ -1,17 +1,21 @@
 import os
-import logging
-import json
 import re
+import json
+import logging
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
-    ContextTypes, ConversationHandler, MessageHandler, filters
+    MessageHandler, filters,
+    ContextTypes, ConversationHandler
 )
+from scraper import run_scraper
 
+# ─── Logging ────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ─── Config ─────────────────────────────────────────────────
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
@@ -23,29 +27,49 @@ HEADERS = {
     "Prefer": "return=representation"
 }
 
-# Conversation states
-SUCHTYP = 0
-PLZ_EINGABE = 1
-BEZIRK = 2
-BUDGET = 3
-ZIMMER = 4
-WBS = 5
+# ─── Conversation States ────────────────────────────────────
+SEARCH_MODE, BEZIRK, PLZ_INPUT, BUDGET, BUDGET_CUSTOM, ZIMMER = range(6)
 
+# ─── Constants ──────────────────────────────────────────────
 BEZIRKE = [
-    "Alle", "Mitte", "Prenzlauer Berg / Pankow",
-    "Friedrichshain-Kreuzberg", "Neukölln",
-    "Tempelhof-Schöneberg", "Charlottenburg-Wilmersdorf",
-    "Lichtenberg", "Treptow-Köpenick", "Spandau",
-    "Reinickendorf", "Steglitz-Zehlendorf", "Marzahn-Hellersdorf"
+    "Mitte", "Friedrichshain-Kreuzberg", "Pankow",
+    "Charlottenburg-Wilmersdorf", "Spandau", "Steglitz-Zehlendorf",
+    "Tempelhof-Schöneberg", "Neukölln", "Treptow-Köpenick",
+    "Marzahn-Hellersdorf", "Lichtenberg", "Reinickendorf"
 ]
-BUDGETS = ["bis 800€", "bis 1.000€", "bis 1.200€", "kein Limit"]
-ZIMMER_OPTIONS = ["1+", "2+", "3+", "egal"]
-WBS_OPTIONS = ["Ohne WBS", "Mit WBS", "Egal"]
 
+# PLZ innerhalb des S-Bahn-Rings (ungefähre Auswahl)
+S_BAHN_RING_PLZ = [
+    "10115", "10117", "10119", "10178", "10179",  # Mitte
+    "10243", "10245", "10247", "10249",            # Friedrichshain
+    "10317",                                        # Lichtenberg (Rummelsburg)
+    "10405", "10407", "10409",                      # Prenzlauer Berg
+    "10435", "10437", "10439",                      # Prenzlauer Berg
+    "10551", "10553", "10555", "10557", "10559",    # Moabit
+    "10585", "10587", "10589",                      # Charlottenburg
+    "10623", "10625", "10627", "10629",             # Charlottenburg
+    "10707", "10709", "10711", "10713", "10715",    # Wilmersdorf
+    "10717", "10719",                               # Wilmersdorf
+    "10777", "10779", "10781", "10783",             # Schöneberg
+    "10785", "10787", "10789",                      # Tiergarten/Schöneberg
+    "10823", "10825", "10827", "10829",             # Schöneberg
+    "10961", "10963", "10965", "10967", "10969",    # Kreuzberg
+    "10997", "10999",                               # Kreuzberg
+    "12043", "12045", "12047", "12049",             # Neukölln
+    "12051", "12053", "12055",                      # Neukölln
+    "13347", "13349", "13351", "13353", "13355",    # Wedding
+    "13357", "13359",                               # Wedding
+]
+
+ZIMMER_OPTIONS = ["1+", "2+", "3+", "egal"]
+
+
+# ─── Database Helpers ───────────────────────────────────────
 
 def db_get(table, filters=None):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
-    r = httpx.get(url, headers=HEADERS, params=filters or {})
+    params = filters or {}
+    r = httpx.get(url, headers=HEADERS, params=params)
     return r.json() if r.status_code == 200 else []
 
 
@@ -62,219 +86,302 @@ def db_update(table, data, filters):
     return r.status_code in (200, 204)
 
 
+# ─── Budget Parser ──────────────────────────────────────────
+
+def parse_budget(text: str):
+    """Parse user input into a budget integer. Returns None if invalid."""
+    cleaned = re.sub(r'[^\d.,]', '', text.strip())
+    if not cleaned:
+        return None
+
+    if ',' in cleaned and '.' in cleaned:
+        if cleaned.rindex(',') > cleaned.rindex('.'):
+            # German: 1.100,50
+            cleaned = cleaned.replace('.', '').replace(',', '.')
+        else:
+            # English: 1,100.50
+            cleaned = cleaned.replace(',', '')
+    elif ',' in cleaned:
+        parts = cleaned.split(',')
+        if len(parts) == 2 and len(parts[1]) == 3:
+            cleaned = cleaned.replace(',', '')   # 1,100 → 1100
+        else:
+            cleaned = cleaned.replace(',', '.')  # 850,50 → 850.5
+    elif '.' in cleaned:
+        parts = cleaned.split('.')
+        if len(parts) == 2 and len(parts[1]) == 3:
+            cleaned = cleaned.replace('.', '')   # 1.100 → 1100
+        # else: 850.50 stays
+
+    try:
+        value = int(float(cleaned))
+        if 200 <= value <= 5000:
+            return value
+        return None
+    except (ValueError, OverflowError):
+        return None
+
+
+def format_budget(value):
+    """Format budget integer for display: 1100 → '1.100€'"""
+    if value >= 99999:
+        return "egal"
+    return f"{value:,}€".replace(",", ".")
+
+
+# ─── Keyboards ──────────────────────────────────────────────
+
+def search_mode_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔵 Innerhalb des S-Bahn-Rings", callback_data="mode:ring")],
+        [InlineKeyboardButton("📮 Nach Postleitzahlen", callback_data="mode:plz")],
+        [InlineKeyboardButton("🏙️ Nach Bezirken", callback_data="mode:bezirk")],
+    ])
+
+
 def bezirk_keyboard(selected):
     keyboard = []
     for b in BEZIRKE:
-        label = f"✅ {b}" if b in selected else b
-        keyboard.append([InlineKeyboardButton(label, callback_data=f"bezirk_{b}")])
-    keyboard.append([InlineKeyboardButton("➡️ Weiter", callback_data="bezirk_DONE")])
+        mark = "✅ " if b in selected else ""
+        keyboard.append([InlineKeyboardButton(f"{mark}{b}", callback_data=f"bezirk:{b}")])
+    keyboard.append([InlineKeyboardButton("✔️ Fertig", callback_data="bezirk:done")])
     return InlineKeyboardMarkup(keyboard)
 
 
+def budget_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("bis 500€", callback_data="budget:500")],
+        [InlineKeyboardButton("bis 1.000€", callback_data="budget:1000")],
+        [InlineKeyboardButton("bis 1.500€", callback_data="budget:1500")],
+        [InlineKeyboardButton("egal", callback_data="budget:99999")],
+        [InlineKeyboardButton("✏️ Eigenen Betrag", callback_data="budget:custom")],
+    ])
+
+
+def zimmer_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(z, callback_data=f"zimmer:{z}")]
+        for z in ZIMMER_OPTIONS
+    ])
+
+
+# ─── /start ─────────────────────────────────────────────────
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
     context.user_data.clear()
-    keyboard = [
-        [InlineKeyboardButton("🔵 Innerhalb des S-Bahn-Rings", callback_data="suchtyp_ring")],
-        [InlineKeyboardButton("📮 Nach Postleitzahlen", callback_data="suchtyp_plz")],
-        [InlineKeyboardButton("🗺️ Nach Bezirken", callback_data="suchtyp_bezirk")],
-    ]
+    context.user_data["bezirke"] = []
+
     await update.message.reply_text(
-        "🏠 Willkommen bei *TheHungerRents*!\n\n"
-        "Ich suche neue Berliner Wohnungen und benachrichtige dich sofort.\n\n"
-        "Wie möchtest du suchen?",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        f"🏠 Willkommen bei *TheHungerRents*, {user.first_name}!\n\n"
+        "Ich durchsuche Berliner Hausverwaltungsseiten nach neuen Wohnungen "
+        "und schicke dir sofort eine Nachricht wenn etwas Passendes auftaucht.\n\n"
+        "Lass uns kurz deine Suchpräferenzen einstellen!",
+        parse_mode="Markdown"
     )
-    return SUCHTYP
+    await update.message.reply_text(
+        "🔧 Einstellungen aktualisieren – wie möchtest du suchen?",
+        reply_markup=search_mode_keyboard()
+    )
+    return SEARCH_MODE
 
 
-async def suchtyp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ─── /einstellungen ─────────────────────────────────────────
+
+async def einstellungen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    context.user_data["bezirke"] = []
+
+    await update.message.reply_text(
+        "🔧 Einstellungen aktualisieren – wie möchtest du suchen?",
+        reply_markup=search_mode_keyboard()
+    )
+    return SEARCH_MODE
+
+
+# ─── Search Mode Handler ────────────────────────────────────
+
+async def search_mode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    suchtyp = query.data.replace("suchtyp_", "")
-    context.user_data["suchtyp"] = suchtyp
+    mode = query.data.split(":")[1]
+    context.user_data["search_mode"] = mode
 
-    if suchtyp == "ring":
-        context.user_data["standort"] = "ring"
-        keyboard = [[InlineKeyboardButton(b, callback_data=f"budget_{b}")] for b in BUDGETS]
-        await query.edit_message_text(
-            "🔵 *Innerhalb des S-Bahn-Rings* ausgewählt!\n\n"
+    if mode == "ring":
+        context.user_data["bezirke"] = []
+        context.user_data["plz"] = S_BAHN_RING_PLZ
+        await query.edit_message_text("🔵 Innerhalb des S-Bahn-Rings ausgewählt!")
+        await query.message.reply_text(
             "💶 Was ist dein maximales Budget (Warmmiete)?",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=budget_keyboard()
         )
         return BUDGET
 
-    elif suchtyp == "plz":
+    elif mode == "plz":
         await query.edit_message_text(
-            "📮 *Suche nach Postleitzahlen*\n\n"
-            "Gib deine gewünschten PLZ kommagetrennt ein:\n"
-            "_Beispiel: 10961, 10997, 10999, 10115_",
+            "📮 Schreib deine Wunsch-Postleitzahlen, getrennt durch Komma oder Leerzeichen.\n\n"
+            "Beispiel: `10999, 10997, 12045`",
             parse_mode="Markdown"
         )
-        return PLZ_EINGABE
+        return PLZ_INPUT
 
-    elif suchtyp == "bezirk":
-        context.user_data["bezirke"] = []
+    elif mode == "bezirk":
         await query.edit_message_text(
-            "🗺️ Welche Bezirke interessieren dich?",
+            "🏙️ Welche Bezirke interessieren dich? (mehrere auswählen möglich)",
             reply_markup=bezirk_keyboard([])
         )
         return BEZIRK
 
 
-async def plz_eingabe_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from plz_berlin import validate_plz
-    user_input = update.message.text.strip()
-    result = validate_plz(user_input)
+# ─── PLZ Input Handler ──────────────────────────────────────
 
-    valid = result["valid"]
-    invalid = result["invalid"]
+async def plz_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    # Extract all 5-digit numbers
+    plz_list = re.findall(r'\d{5}', text)
 
-    if invalid:
-        invalid_text = "\n".join([f"❌ {i['plz']} – {i['reason']}" for i in invalid])
-        valid_text = "\n".join([f"✅ {v['plz']} – {v['ortsteil']}" for v in valid]) if valid else ""
+    if not plz_list:
+        await update.message.reply_text(
+            "🤔 Keine gültigen Postleitzahlen erkannt. "
+            "Bitte gib mindestens eine 5-stellige PLZ ein, z.B. `10999`",
+            parse_mode="Markdown"
+        )
+        return PLZ_INPUT
 
-        msg = "Ich habe folgende Probleme gefunden:\n\n"
-        if valid_text:
-            msg += valid_text + "\n"
-        msg += invalid_text
-        msg += "\n\nBitte korrigiere die ungültigen PLZ und schick sie nochmal."
+    context.user_data["plz"] = plz_list
+    context.user_data["bezirke"] = []
 
-        if valid:
-            keyboard = [[InlineKeyboardButton(
-                f"➡️ Weiter mit {len(valid)} gültigen PLZ",
-                callback_data="plz_weiter"
-            )]]
-            context.user_data["plz_valid"] = [v["plz"] for v in valid]
-            await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
-        else:
-            await update.message.reply_text(msg)
-        return PLZ_EINGABE
-
-    # Alle PLZ gültig
-    valid_text = "\n".join([f"✅ {v['plz']} – {v['ortsteil']}" for v in valid])
-    context.user_data["standort"] = "plz"
-    context.user_data["plz_liste"] = [v["plz"] for v in valid]
-
-    keyboard = [[InlineKeyboardButton(b, callback_data=f"budget_{b}")] for b in BUDGETS]
     await update.message.reply_text(
-        f"Super, folgende PLZ gespeichert:\n\n{valid_text}\n\n"
+        f"📮 PLZ gespeichert: {', '.join(plz_list)}"
+    )
+    await update.message.reply_text(
         "💶 Was ist dein maximales Budget (Warmmiete)?",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=budget_keyboard()
     )
     return BUDGET
 
 
-async def plz_weiter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    context.user_data["standort"] = "plz"
-    context.user_data["plz_liste"] = context.user_data.get("plz_valid", [])
-    keyboard = [[InlineKeyboardButton(b, callback_data=f"budget_{b}")] for b in BUDGETS]
-    await query.edit_message_text(
-        "💶 Was ist dein maximales Budget (Warmmiete)?",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    return BUDGET
-
+# ─── Bezirk Handlers ────────────────────────────────────────
 
 async def bezirk_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    value = query.data.replace("bezirk_", "", 1)
+    choice = query.data.split(":", 1)[1]
 
-    if value == "DONE":
-        if not context.user_data.get("bezirke"):
-            context.user_data["bezirke"] = ["Alle"]
-        context.user_data["standort"] = "bezirk"
-        keyboard = [[InlineKeyboardButton(b, callback_data=f"budget_{b}")] for b in BUDGETS]
+    if choice == "done":
+        selected = context.user_data.get("bezirke", [])
+        if not selected:
+            await query.answer("Wähle mindestens einen Bezirk!", show_alert=True)
+            return BEZIRK
+
+        context.user_data["plz"] = []
         await query.edit_message_text(
+            f"🏙️ Bezirke: {', '.join(selected)}"
+        )
+        await query.message.reply_text(
             "💶 Was ist dein maximales Budget (Warmmiete)?",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=budget_keyboard()
         )
         return BUDGET
 
+    # Toggle bezirk selection
     selected = context.user_data.get("bezirke", [])
-    if value == "Alle":
-        selected = ["Alle"]
+    if choice in selected:
+        selected.remove(choice)
     else:
-        if "Alle" in selected:
-            selected = []
-        if value in selected:
-            selected.remove(value)
-        else:
-            selected.append(value)
+        selected.append(choice)
     context.user_data["bezirke"] = selected
-    await query.edit_message_reply_markup(reply_markup=bezirk_keyboard(selected))
+
+    await query.edit_message_reply_markup(
+        reply_markup=bezirk_keyboard(selected)
+    )
     return BEZIRK
 
+
+# ─── Budget Handlers ────────────────────────────────────────
 
 async def budget_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    context.user_data["budget"] = query.data.replace("budget_", "", 1)
-    keyboard = [[InlineKeyboardButton(z, callback_data=f"zimmer_{z}")] for z in ZIMMER_OPTIONS]
-    await query.edit_message_text(
-        "🚪 Wie viele Zimmer brauchst du mindestens?",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+    choice = query.data.split(":")[1]
+
+    if choice == "custom":
+        await query.edit_message_text(
+            "💶 Schreib dein maximales Budget als Zahl, z.B. `1100`",
+            parse_mode="Markdown"
+        )
+        return BUDGET_CUSTOM
+
+    budget = int(choice)
+    context.user_data["budget"] = budget
+    await query.edit_message_text(f"💶 Budget: {format_budget(budget)}")
+    await query.message.reply_text(
+        "🚪 Wie viele Zimmer mindestens?",
+        reply_markup=zimmer_keyboard()
     )
     return ZIMMER
 
 
+async def budget_custom_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    value = parse_budget(update.message.text)
+
+    if value is None:
+        await update.message.reply_text(
+            "🤔 Das hab ich nicht erkannt. "
+            "Schreib einfach eine Zahl zwischen 200 und 5.000, z.B. `1100`",
+            parse_mode="Markdown"
+        )
+        return BUDGET_CUSTOM
+
+    context.user_data["budget"] = value
+    await update.message.reply_text(f"💶 Budget: {format_budget(value)}")
+    await update.message.reply_text(
+        "🚪 Wie viele Zimmer mindestens?",
+        reply_markup=zimmer_keyboard()
+    )
+    return ZIMMER
+
+
+# ─── Zimmer Handler ─────────────────────────────────────────
+
 async def zimmer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    context.user_data["zimmer"] = query.data.replace("zimmer_", "", 1)
-    keyboard = [[InlineKeyboardButton(w, callback_data=f"wbs_{w}")] for w in WBS_OPTIONS]
-    await query.edit_message_text(
-        "📋 Sollen Wohnungen mit WBS-Pflicht angezeigt werden?\n\n"
-        "_WBS = Wohnberechtigungsschein erforderlich_",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    return WBS
+    zimmer = query.data.split(":")[1]
+    context.user_data["zimmer"] = zimmer
 
-
-async def wbs_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    context.user_data["wbs"] = query.data.replace("wbs_", "", 1)
-
+    # Save preferences
     user_id = str(update.effective_user.id)
-    suchtyp = context.user_data.get("suchtyp", "bezirk")
-    budget = context.user_data.get("budget", "kein Limit")
-    zimmer = context.user_data.get("zimmer", "egal")
-    wbs = context.user_data.get("wbs", "Egal")
+    search_mode = context.user_data.get("search_mode", "ring")
+    bezirke = context.user_data.get("bezirke", [])
+    plz = context.user_data.get("plz", [])
+    budget = context.user_data.get("budget", 99999)
 
-    # Standort-Info für Anzeige und Speicherung
-    if suchtyp == "ring":
-        standort_display = "🔵 Innerhalb des S-Bahn-Rings"
-        standort_data = json.dumps({"typ": "ring"})
-    elif suchtyp == "plz":
-        plz_liste = context.user_data.get("plz_liste", [])
-        standort_display = f"📮 PLZ: {', '.join(plz_liste)}"
-        standort_data = json.dumps({"typ": "plz", "liste": plz_liste})
-    else:
-        bezirke = context.user_data.get("bezirke", ["Alle"])
-        standort_display = f"🗺️ {', '.join(bezirke)}"
-        standort_data = json.dumps({"typ": "bezirk", "liste": bezirke})
-
-    db_upsert("user_preferences", {
+    prefs = {
         "user_id": user_id,
-        "standort": standort_data,
+        "search_mode": search_mode,
+        "bezirke": json.dumps(bezirke),
+        "plz": json.dumps(plz),
         "budget": budget,
         "zimmer": zimmer,
-        "wbs": wbs,
-        "active": True
-    })
+        "active": True,
+    }
+
+    db_upsert("user_preferences", prefs)
+
+    # Build summary
+    if search_mode == "ring":
+        location_info = "🔵 Innerhalb des S-Bahn-Rings"
+    elif search_mode == "plz":
+        location_info = f"📮 PLZ: {', '.join(plz)}"
+    else:
+        location_info = f"🏙️ Bezirke: {', '.join(bezirke)}"
 
     await query.edit_message_text(
-        "✅ *Alles gespeichert!*\n\n"
-        f"📍 Standort: {standort_display}\n"
-        f"💶 Budget: {budget}\n"
-        f"🚪 Zimmer: {zimmer}\n"
-        f"📋 WBS: {wbs}\n\n"
+        f"✅ *Einstellungen gespeichert!*\n\n"
+        f"📍 {location_info}\n"
+        f"💶 Budget: {format_budget(budget)}\n"
+        f"🚪 Zimmer: {zimmer}\n\n"
         "Ich melde mich sobald etwas passt! 🏹\n\n"
         "/einstellungen – Präferenzen ändern\n"
         "/pause – Benachrichtigungen pausieren",
@@ -283,19 +390,7 @@ async def wbs_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-async def einstellungen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    keyboard = [
-        [InlineKeyboardButton("🔵 Innerhalb des S-Bahn-Rings", callback_data="suchtyp_ring")],
-        [InlineKeyboardButton("📮 Nach Postleitzahlen", callback_data="suchtyp_plz")],
-        [InlineKeyboardButton("🗺️ Nach Bezirken", callback_data="suchtyp_bezirk")],
-    ]
-    await update.message.reply_text(
-        "🔧 Einstellungen aktualisieren – wie möchtest du suchen?",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    return SUCHTYP
-
+# ─── /pause ─────────────────────────────────────────────────
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -304,91 +399,71 @@ async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current = result[0]["active"]
         new_state = not current
         db_update("user_preferences", {"active": new_state}, {"user_id": f"eq.{user_id}"})
-        msg = "▶️ Benachrichtigungen wieder aktiv!" if new_state else "⏸️ Pausiert. /pause zum Reaktivieren."
-        await update.message.reply_text(msg)
+        if new_state:
+            await update.message.reply_text("▶️ Benachrichtigungen wieder aktiv!")
+        else:
+            await update.message.reply_text(
+                "⏸️ Benachrichtigungen pausiert. Mit /pause wieder aktivieren."
+            )
     else:
-        await update.message.reply_text("Noch keine Einstellungen. Starte mit /start!")
+        await update.message.reply_text(
+            "Du hast noch keine Einstellungen. Starte mit /start!"
+        )
 
+
+# ─── Scraper Job ────────────────────────────────────────────
 
 async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
-    from scraper import run_scraper
-    from plz_berlin import plz_matches_filter
-    import re
-
     logger.info("Running scraper...")
     new_listings = await run_scraper(SUPABASE_URL, SUPABASE_KEY)
 
     if not new_listings:
+        logger.info("No new listings found.")
         return
 
     users = db_get("user_preferences", {"active": "eq.true"})
-    budget_map = {"bis 800€": 800, "bis 1.000€": 1000, "bis 1.200€": 1200, "kein Limit": 99999}
     zimmer_map = {"1+": 1, "2+": 2, "3+": 3, "egal": 0}
 
     for user in users:
         user_id = user["user_id"]
-        max_budget = budget_map.get(user["budget"], 99999)
-        min_zimmer = zimmer_map.get(user["zimmer"], 0)
-        wbs_filter = user.get("wbs", "Egal")
-
-        # Standort-Filter laden
-        standort_raw = user.get("standort")
-        # Fallback für alte Nutzer die noch bezirke-Spalte haben
-        if not standort_raw:
-            bezirke_raw = user.get("bezirke", '["Alle"]')
-            bezirke = json.loads(bezirke_raw) if isinstance(bezirke_raw, str) else bezirke_raw
-            standort = {"typ": "bezirk", "liste": bezirke}
-        else:
-            standort = json.loads(standort_raw) if isinstance(standort_raw, str) else standort_raw
+        search_mode = user.get("search_mode", "ring")
+        bezirke = json.loads(user["bezirke"]) if isinstance(user["bezirke"], str) else user["bezirke"]
+        plz_list = json.loads(user["plz"]) if isinstance(user.get("plz", "[]"), str) else user.get("plz", [])
+        max_budget = user.get("budget", 99999)
+        if isinstance(max_budget, str):
+            max_budget = int(max_budget) if max_budget.isdigit() else 99999
+        min_zimmer = zimmer_map.get(user.get("zimmer", "egal"), 0)
 
         for listing in new_listings:
-            # PLZ aus Listing extrahieren
-            adresse = listing.get("bezirk", "") + " " + listing.get("titel", "")
-            plz_match = re.search(r'\b(\d{5})\b', adresse)
-            listing_plz = plz_match.group(1) if plz_match else None
-
-            # Standort-Filter
-            if standort["typ"] == "ring":
-                if listing_plz and not plz_matches_filter(listing_plz, "ring", None):
+            # ── Location filter ──
+            if search_mode == "ring":
+                listing_plz = listing.get("plz", "")
+                if listing_plz and listing_plz not in S_BAHN_RING_PLZ:
                     continue
-            elif standort["typ"] == "plz":
-                if listing_plz and not plz_matches_filter(listing_plz, "plz", standort["liste"]):
+            elif search_mode == "plz":
+                listing_plz = listing.get("plz", "")
+                if listing_plz and plz_list and listing_plz not in plz_list:
                     continue
-            elif standort["typ"] == "bezirk":
-                bezirke = standort.get("liste", ["Alle"])
-                if "Alle" not in bezirke:
-                    if listing_plz:
-                        if not plz_matches_filter(listing_plz, "bezirk", bezirke):
-                            continue
-                    else:
-                        # Fallback: Text-Matching wenn keine PLZ
-                        if not any(b.lower() in listing.get("bezirk", "").lower() for b in bezirke):
-                            continue
+            elif search_mode == "bezirk" and bezirke:
+                listing_bezirk = listing.get("bezirk", "").lower()
+                if not any(b.lower() in listing_bezirk for b in bezirke):
+                    continue
 
-            # Budget Filter
+            # ── Budget filter ──
             if listing.get("preis") and listing["preis"] > max_budget:
                 continue
 
-            # Zimmer Filter
+            # ── Zimmer filter ──
             if listing.get("zimmer") and min_zimmer > 0 and listing["zimmer"] < min_zimmer:
                 continue
 
-            # WBS Filter
-            listing_wbs = listing.get("wbs", False)
-            if wbs_filter == "Ohne WBS" and listing_wbs:
-                continue
-            if wbs_filter == "Mit WBS" and not listing_wbs:
-                continue
-
-            wbs_label = "🔑 WBS erforderlich" if listing_wbs else "✅ Kein WBS"
-
+            # ── Send notification ──
             msg = (
-                f"🏠 *Neue Wohnung!*\n\n"
+                f"🏠 *Neue Wohnung gefunden!*\n\n"
                 f"📍 {listing.get('bezirk', '?')}\n"
                 f"🚪 {listing.get('zimmer', '?')} Zimmer\n"
                 f"💶 {listing.get('preis', '?')}€ warm\n"
-                f"📐 {listing.get('groesse', '?')}\n"
-                f"📋 {wbs_label}\n"
+                f"📐 {listing.get('groesse', '?')} m²\n"
                 f"🏢 {listing.get('anbieter', '?')}\n\n"
                 f"🔗 [Zur Wohnung]({listing.get('url', '')})"
             )
@@ -401,6 +476,8 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Could not send to {user_id}: {e}")
 
 
+# ─── Main ───────────────────────────────────────────────────
+
 def main():
     app = Application.builder().token(TOKEN).build()
 
@@ -410,15 +487,24 @@ def main():
             CommandHandler("einstellungen", einstellungen),
         ],
         states={
-            SUCHTYP: [CallbackQueryHandler(suchtyp_callback, pattern="^suchtyp_")],
-            PLZ_EINGABE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, plz_eingabe_handler),
-                CallbackQueryHandler(plz_weiter_callback, pattern="^plz_weiter$"),
+            SEARCH_MODE: [
+                CallbackQueryHandler(search_mode_callback, pattern="^mode:")
             ],
-            BEZIRK: [CallbackQueryHandler(bezirk_callback, pattern="^bezirk_")],
-            BUDGET: [CallbackQueryHandler(budget_callback, pattern="^budget_")],
-            ZIMMER: [CallbackQueryHandler(zimmer_callback, pattern="^zimmer_")],
-            WBS: [CallbackQueryHandler(wbs_callback, pattern="^wbs_")],
+            BEZIRK: [
+                CallbackQueryHandler(bezirk_callback, pattern="^bezirk:")
+            ],
+            PLZ_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, plz_input_handler)
+            ],
+            BUDGET: [
+                CallbackQueryHandler(budget_callback, pattern="^budget:")
+            ],
+            BUDGET_CUSTOM: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, budget_custom_handler)
+            ],
+            ZIMMER: [
+                CallbackQueryHandler(zimmer_callback, pattern="^zimmer:")
+            ],
         },
         fallbacks=[CommandHandler("start", start)],
     )
