@@ -1,9 +1,0 @@
-[phases.setup]
-nixPkgs = ["python311"]
-```
-
-**Und gleichzeitig** update `requirements.txt` auf die neuere Telegram-Version als Backup:
-```
-python-telegram-bot[job-queue]==21.3
-httpx==0.25.2
-beautifulsoup4==4.12.3
