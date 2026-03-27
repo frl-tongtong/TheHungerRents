@@ -411,6 +411,21 @@ async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# ─── Startup Announcement ───────────────────────────────────
+
+async def announce_new_version(context: ContextTypes.DEFAULT_TYPE):
+    users = db_get("user_preferences")
+    for user in users:
+        try:
+            await context.bot.send_message(
+                chat_id=user["user_id"],
+                text="🆕 *Neue Version deployed!*\n\nDer Bot wurde aktualisiert und läuft wieder.",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.warning(f"Could not announce to {user['user_id']}: {e}")
+
+
 # ─── Scraper Job ────────────────────────────────────────────
 
 async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
@@ -511,6 +526,7 @@ def main():
 
     app.add_handler(conv)
     app.add_handler(CommandHandler("pause", pause))
+    app.job_queue.run_once(announce_new_version, when=3)
     app.job_queue.run_repeating(scraper_job, interval=120, first=10)
 
     logger.info("TheHungerRents is running 🏹")
