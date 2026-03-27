@@ -508,6 +508,7 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("start", start)],
+        per_message=False,
     )
 
     app.add_handler(conv)
