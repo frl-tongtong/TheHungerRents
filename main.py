@@ -10,6 +10,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler
 )
 from scraper import run_scraper
+from plz_berlin import INNERHALB_RING, BEZIRKE
 
 # ─── Logging ────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
@@ -31,36 +32,6 @@ HEADERS = {
 SEARCH_MODE, BEZIRK, PLZ_INPUT, BUDGET, BUDGET_CUSTOM, ZIMMER = range(6)
 
 # ─── Constants ──────────────────────────────────────────────
-BEZIRKE = [
-    "Mitte", "Friedrichshain-Kreuzberg", "Pankow",
-    "Charlottenburg-Wilmersdorf", "Spandau", "Steglitz-Zehlendorf",
-    "Tempelhof-Schöneberg", "Neukölln", "Treptow-Köpenick",
-    "Marzahn-Hellersdorf", "Lichtenberg", "Reinickendorf"
-]
-
-# PLZ innerhalb des S-Bahn-Rings (ungefähre Auswahl)
-S_BAHN_RING_PLZ = [
-    "10115", "10117", "10119", "10178", "10179",  # Mitte
-    "10243", "10245", "10247", "10249",            # Friedrichshain
-    "10317",                                        # Lichtenberg (Rummelsburg)
-    "10405", "10407", "10409",                      # Prenzlauer Berg
-    "10435", "10437", "10439",                      # Prenzlauer Berg
-    "10551", "10553", "10555", "10557", "10559",    # Moabit
-    "10585", "10587", "10589",                      # Charlottenburg
-    "10623", "10625", "10627", "10629",             # Charlottenburg
-    "10707", "10709", "10711", "10713", "10715",    # Wilmersdorf
-    "10717", "10719",                               # Wilmersdorf
-    "10777", "10779", "10781", "10783",             # Schöneberg
-    "10785", "10787", "10789",                      # Tiergarten/Schöneberg
-    "10823", "10825", "10827", "10829",             # Schöneberg
-    "10961", "10963", "10965", "10967", "10969",    # Kreuzberg
-    "10997", "10999",                               # Kreuzberg
-    "12043", "12045", "12047", "12049",             # Neukölln
-    "12051", "12053", "12055",                      # Neukölln
-    "13347", "13349", "13351", "13353", "13355",    # Wedding
-    "13357", "13359",                               # Wedding
-]
-
 ZIMMER_OPTIONS = ["1+", "2+", "3+", "egal"]
 
 
@@ -209,7 +180,7 @@ async def search_mode_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if mode == "ring":
         context.user_data["bezirke"] = []
-        context.user_data["plz"] = S_BAHN_RING_PLZ
+        context.user_data["plz"] = []
         await query.edit_message_text("🔵 Innerhalb des S-Bahn-Rings ausgewählt!")
         await query.message.reply_text(
             "💶 Was ist dein maximales Budget (Warmmiete)?",
@@ -453,7 +424,7 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
             # ── Location filter ──
             if search_mode == "ring":
                 listing_plz = listing.get("plz", "")
-                if listing_plz and listing_plz not in S_BAHN_RING_PLZ:
+                if listing_plz and listing_plz not in INNERHALB_RING:
                     continue
             elif search_mode == "plz":
                 listing_plz = listing.get("plz", "")

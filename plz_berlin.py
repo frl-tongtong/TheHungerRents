@@ -1,6 +1,13 @@
 # Berliner PLZ nach Bezirken und Ortsteilen
 # Quelle: berlinstadtservice.de
 
+BEZIRKE = [
+    "Mitte", "Friedrichshain-Kreuzberg", "Pankow",
+    "Charlottenburg-Wilmersdorf", "Spandau", "Steglitz-Zehlendorf",
+    "Tempelhof-Schöneberg", "Neukölln", "Treptow-Köpenick",
+    "Marzahn-Hellersdorf", "Lichtenberg", "Reinickendorf"
+]
+
 # S-Bahn Ring PLZ (innerhalb des Rings)
 INNERHALB_RING = {
     "10115", "10117", "10119",  # Mitte
