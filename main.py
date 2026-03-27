@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import json
 import logging
 import httpx
@@ -13,7 +14,18 @@ from scraper import run_scraper
 from plz_berlin import INNERHALB_RING, BEZIRKE
 
 # ─── Logging ────────────────────────────────────────────────
-logging.basicConfig(level=logging.INFO)
+_formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+
+_stdout_handler = logging.StreamHandler(sys.stdout)
+_stdout_handler.setLevel(logging.DEBUG)
+_stdout_handler.addFilter(lambda r: r.levelno < logging.ERROR)
+_stdout_handler.setFormatter(_formatter)
+
+_stderr_handler = logging.StreamHandler(sys.stderr)
+_stderr_handler.setLevel(logging.ERROR)
+_stderr_handler.setFormatter(_formatter)
+
+logging.basicConfig(level=logging.INFO, handlers=[_stdout_handler, _stderr_handler])
 logger = logging.getLogger(__name__)
 
 # ─── Config ─────────────────────────────────────────────────
