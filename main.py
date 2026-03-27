@@ -401,11 +401,12 @@ async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def announce_new_version(context: ContextTypes.DEFAULT_TYPE):
     users = db_get("user_preferences")
+    total = len(users)
     for user in users:
         try:
             await context.bot.send_message(
                 chat_id=user["user_id"],
-                text="🆕 *Neue Version deployed!*\n\nDer Bot wurde aktualisiert und läuft wieder.",
+                text=f"🆕 *Neue Version deployed!*\n\nDer Bot wurde aktualisiert und läuft wieder.\n👥 Aktuell {total} Nutzer registriert.",
                 parse_mode="Markdown"
             )
         except Exception as e:
