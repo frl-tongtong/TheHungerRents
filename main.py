@@ -3,6 +3,7 @@ import re
 import sys
 import json
 import logging
+from datetime import time
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -413,6 +414,20 @@ async def announce_new_version(context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Could not announce to {user['user_id']}: {e}")
 
 
+# ─── Daily Message ──────────────────────────────────────────
+
+async def daily_message(context: ContextTypes.DEFAULT_TYPE):
+    users = db_get("user_preferences", {"active": "eq.true"})
+    for user in users:
+        try:
+            await context.bot.send_message(
+                chat_id=user["user_id"],
+                text="Good morning! This is your reminder that Maik loves you dearly! ❤️🥰💖",
+            )
+        except Exception as e:
+            logger.warning(f"Could not send daily message to {user['user_id']}: {e}")
+
+
 # ─── Scraper Job ────────────────────────────────────────────
 
 async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
@@ -514,6 +529,7 @@ def main():
     app.add_handler(conv)
     app.add_handler(CommandHandler("pause", pause))
     app.job_queue.run_once(announce_new_version, when=3)
+    app.job_queue.run_daily(daily_message, time=time(8, 0))
     app.job_queue.run_repeating(scraper_job, interval=120, first=10)
 
     logger.info("TheHungerRents is running 🏹")
