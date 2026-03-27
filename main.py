@@ -48,7 +48,10 @@ def db_upsert(table, data):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     headers = {**HEADERS, "Prefer": "resolution=merge-duplicates,return=representation"}
     r = httpx.post(url, headers=headers, json=data)
-    return r.status_code in (200, 201)
+    if r.status_code not in (200, 201):
+        logger.error(f"db_upsert failed: {r.status_code} {r.text}")
+        return False
+    return True
 
 
 def db_update(table, data, filters):
