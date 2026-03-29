@@ -3,7 +3,7 @@ import re
 import sys
 import json
 import logging
-from datetime import time
+from datetime import time, datetime, timezone
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -60,6 +60,7 @@ def db_get(table, filters=None):
 def db_upsert(table, data):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     headers = {**HEADERS, "Prefer": "resolution=merge-duplicates,return=representation"}
+    data["modified_at"] = datetime.now(timezone.utc).isoformat()
     r = httpx.post(url, headers=headers, json=data)
     if r.status_code not in (200, 201):
         logger.error(f"db_upsert failed: {r.status_code} {r.text}")
