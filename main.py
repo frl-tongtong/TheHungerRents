@@ -533,7 +533,17 @@ def main():
     app.job_queue.run_repeating(scraper_job, interval=120, first=10)
 
     logger.info("TheHungerRents is running 🏹")
-    app.run_polling(drop_pending_updates=True)
+    webhook_url = os.environ.get("WEBHOOK_URL")
+    if webhook_url:
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.environ.get("PORT", 8080)),
+            url_path=TOKEN,
+            webhook_url=f"{webhook_url}/{TOKEN}",
+            drop_pending_updates=True,
+        )
+    else:
+        app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
