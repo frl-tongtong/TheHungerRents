@@ -533,7 +533,7 @@ def main():
     app.job_queue.run_repeating(scraper_job, interval=120, first=10)
 
     logger.info("TheHungerRents is running 🏹")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
