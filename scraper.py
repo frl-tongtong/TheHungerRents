@@ -244,7 +244,7 @@ async def scrape_howoge():
                             if "Warmmiete" in h:
                                 preis = parse_preis(c)
                             elif "fläche" in h.lower():
-                                groesse = c
+                                groesse = c.replace("m²", "").strip()
                             elif "Zimmer" in h:
                                 zimmer = parse_zimmer(c)
 
@@ -355,9 +355,9 @@ async def scrape_gewobag():
                             if "|" in area_text:
                                 parts = area_text.split("|")
                                 zimmer = parse_zimmer(parts[0])
-                                groesse = parts[1].strip() if len(parts) > 1 else "?"
+                                groesse = parts[1].replace("m²", "").strip() if len(parts) > 1 else "?"
                             else:
-                                groesse = area_text
+                                groesse = area_text.replace("m²", "").strip()
 
                         # Gesamtmiete (= Warmmiete)
                         preis_el = item.select_one("tr.angebot-kosten td:not(th)")
@@ -391,7 +391,7 @@ async def scrape_gewobag():
                         logger.warning(f"Error parsing gewobag item: {e}")
 
                 # Nächste Seite?
-                next_link = soup.select_one("a.next, a[rel='next'], a:has-text('Weiter')")
+                next_link = soup.select_one("a.next, a[rel='next']")
                 if not next_link:
                     # Alternativ: Pagination-Links prüfen
                     page_links = soup.select("nav.pagination a, .pagination a")
