@@ -26,13 +26,24 @@ def parse_zimmer(text):
 
 
 def parse_wbs(titel, features=None):
-    """Check if WBS is required from title or features list."""
-    if titel and "WBS" in titel.upper():
-        return True
+    """Check if WBS is required. Returns False or a (min, max) tuple of WBS levels."""
+    texts = []
+    if titel:
+        texts.append(titel)
     if features:
-        for f in features:
-            if "WBS" in f.upper():
-                return True
+        texts.extend(features)
+    for text in texts:
+        upper = text.upper()
+        if "WBS" not in upper:
+            continue
+        range_match = re.search(r'WBS\s*(\d+)\s*(?:[-–—]|BIS|TO)\s*(\d+)', upper)
+        if range_match:
+            return (int(range_match.group(1)), int(range_match.group(2)))
+        single_match = re.search(r'WBS\s*(\d+)', upper)
+        if single_match:
+            level = int(single_match.group(1))
+            return (level, level)
+        return (100, 220)  # WBS required but level unspecified
     return False
 
 

@@ -42,7 +42,7 @@ HEADERS = {
 }
 
 # ─── Conversation States ────────────────────────────────────
-SEARCH_MODE, BEZIRK, PLZ_INPUT, BUDGET, BUDGET_CUSTOM, ZIMMER = range(6)
+SEARCH_MODE, BEZIRK, PLZ_INPUT, BUDGET, BUDGET_CUSTOM, ZIMMER, WBS, WBS_LEVEL = range(8)
 
 # ─── Constants ──────────────────────────────────────────────
 ZIMMER_OPTIONS = ["1+", "2+", "3+", "egal"]
@@ -149,6 +149,23 @@ def zimmer_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(z, callback_data=f"zimmer:{z}")]
         for z in ZIMMER_OPTIONS
+    ])
+
+
+def wbs_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Ja, ich habe einen WBS", callback_data="wbs:yes")],
+        [InlineKeyboardButton("❌ Nein, kein WBS", callback_data="wbs:no")],
+    ])
+
+
+def wbs_level_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("WBS 100", callback_data="wbslevel:100")],
+        [InlineKeyboardButton("WBS 140", callback_data="wbslevel:140")],
+        [InlineKeyboardButton("WBS 160", callback_data="wbslevel:160")],
+        [InlineKeyboardButton("WBS 180", callback_data="wbslevel:180")],
+        [InlineKeyboardButton("WBS 220+", callback_data="wbslevel:220")],
     ])
 
 
@@ -336,27 +353,35 @@ async def zimmer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     zimmer = query.data.split(":")[1]
     context.user_data["zimmer"] = zimmer
+    await query.edit_message_text(f"🚪 Zimmer: {zimmer}")
+    await query.message.reply_text(
+        "📋 Hast du einen Wohnberechtigungsschein (WBS)?",
+        reply_markup=wbs_keyboard()
+    )
+    return WBS
 
-    # Save preferences
-    user_id = str(update.effective_user.id)
+
+# ─── WBS Handlers ───────────────────────────────────────────
+
+async def _save_and_confirm(query, context, wbs):
+    user_id = str(query.from_user.id)
     search_mode = context.user_data.get("search_mode", "ring")
     bezirke = context.user_data.get("bezirke", [])
     plz = context.user_data.get("plz", [])
     budget = context.user_data.get("budget", 99999)
+    zimmer = context.user_data.get("zimmer", "egal")
 
-    prefs = {
+    db_upsert("user_preferences", {
         "user_id": user_id,
         "search_mode": search_mode,
         "bezirke": json.dumps(bezirke),
         "plz": json.dumps(plz),
         "budget": budget,
         "zimmer": zimmer,
+        "wbs": wbs,
         "active": True,
-    }
+    })
 
-    db_upsert("user_preferences", prefs)
-
-    # Build summary
     if search_mode == "ring":
         location_info = "🔵 Innerhalb des S-Bahn-Rings"
     elif search_mode == "plz":
@@ -364,16 +389,42 @@ async def zimmer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         location_info = f"🏙️ Bezirke: {', '.join(bezirke)}"
 
+    wbs_info = f"📋 WBS: {wbs}\n" if wbs else "📋 WBS: keiner\n"
+
     await query.edit_message_text(
         f"✅ *Einstellungen gespeichert!*\n\n"
         f"📍 {location_info}\n"
         f"💶 Budget: {format_budget(budget)}\n"
-        f"🚪 Zimmer: {zimmer}\n\n"
+        f"🚪 Zimmer: {zimmer}\n"
+        f"{wbs_info}\n"
         "Ich melde mich sobald etwas passt! 🏹\n\n"
         "/einstellungen – Präferenzen ändern\n"
         "/pause – Benachrichtigungen pausieren",
         parse_mode="Markdown"
     )
+
+
+async def wbs_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    choice = query.data.split(":")[1]
+
+    if choice == "no":
+        await _save_and_confirm(query, context, wbs=None)
+        return ConversationHandler.END
+
+    await query.edit_message_text(
+        "📋 Welchen WBS hast du?",
+        reply_markup=wbs_level_keyboard()
+    )
+    return WBS_LEVEL
+
+
+async def wbs_level_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    level = int(query.data.split(":")[1])
+    await _save_and_confirm(query, context, wbs=level)
     return ConversationHandler.END
 
 
@@ -451,6 +502,8 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
             max_budget = int(max_budget) if max_budget.isdigit() else 99999
         min_zimmer = zimmer_map.get(user.get("zimmer", "egal"), 0)
 
+        user_wbs = user.get("wbs")  # None or int
+
         for listing in new_listings:
             # ── Location filter ──
             if search_mode == "ring":
@@ -474,6 +527,27 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
             if listing.get("zimmer") and min_zimmer > 0 and listing["zimmer"] < min_zimmer:
                 continue
 
+            # ── WBS filter ──
+            listing_wbs = listing.get("wbs")
+            if listing_wbs:
+                if user_wbs is None:
+                    continue  # user has no WBS
+                wbs_min, wbs_max = listing_wbs
+                if not (wbs_min <= user_wbs <= wbs_max):
+                    continue
+
+            # ── Build WBS line for notification ──
+            if listing_wbs:
+                wbs_min, wbs_max = listing_wbs
+                if wbs_min == wbs_max:
+                    wbs_line = f"📋 WBS {wbs_min} erforderlich\n"
+                elif wbs_min == 100 and wbs_max == 220:
+                    wbs_line = "📋 WBS erforderlich\n"
+                else:
+                    wbs_line = f"📋 WBS {wbs_min}–{wbs_max} erforderlich\n"
+            else:
+                wbs_line = ""
+
             # ── Send notification ──
             msg = (
                 f"🏠 *Neue Wohnung gefunden!*\n\n"
@@ -481,6 +555,7 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
                 f"🚪 {listing.get('zimmer', '?')} Zimmer\n"
                 f"💶 {listing.get('preis', '?')}€ warm\n"
                 f"📐 {listing.get('groesse', '?')} m²\n"
+                f"{wbs_line}"
                 f"🏢 {listing.get('anbieter', '?')}\n\n"
                 f"🔗 [Zur Wohnung]({listing.get('url', '')})"
             )
@@ -521,6 +596,12 @@ def main():
             ],
             ZIMMER: [
                 CallbackQueryHandler(zimmer_callback, pattern="^zimmer:")
+            ],
+            WBS: [
+                CallbackQueryHandler(wbs_callback, pattern="^wbs:")
+            ],
+            WBS_LEVEL: [
+                CallbackQueryHandler(wbs_level_callback, pattern="^wbslevel:")
             ],
         },
         fallbacks=[CommandHandler("start", start)],
