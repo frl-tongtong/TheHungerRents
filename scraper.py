@@ -247,6 +247,9 @@ async def scrape_howoge():
                     address_el = item.select_one("div.address")
                     adresse = address_el.get_text(strip=True) if address_el else ""
 
+                    plz_match = re.search(r'(\d{5})', adresse)
+                    plz = plz_match.group(1) if plz_match else ""
+
                     bezirk = stadt
                     if adresse and "," in adresse:
                         parts = adresse.split(",")
@@ -285,13 +288,14 @@ async def scrape_howoge():
                         "zimmer": zimmer,
                         "groesse": groesse,
                         "bezirk": bezirk,
+                        "plz": plz,
                         "wbs": parse_wbs(titel, features),
                         "url": url,
                         "bild": extract_img(item, "https://www.howoge.de"),
                         "anbieter": "HOWOGE",
                     }
                     listings.append(listing)
-                    logger.info(f"howoge parsed: {listing['titel']} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']} | {listing['bezirk']}")
+                    logger.info(f"howoge parsed: {listing['titel']} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']} | {listing['plz']} {listing['bezirk']}")
                 except Exception as e:
                     logger.warning(f"Error parsing howoge item: {e}")
     except Exception as e:
@@ -432,6 +436,100 @@ async def scrape_gewobag():
     return listings
 
 
+async def scrape_stadtundland():
+    listings = []
+    try:
+        from playwright.async_api import async_playwright
+        from urllib.parse import urlparse, parse_qs
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto(
+                "https://stadtundland.de/wohnungssuche?district=all",
+                wait_until="networkidle",
+                timeout=60000
+            )
+            try:
+                await page.click("button[id*='accept'], #CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll", timeout=5000)
+            except:
+                pass
+            try:
+                await page.wait_for_selector("article[aria-labelledby^='headline-immo-']", timeout=30000)
+            except:
+                logger.warning("stadtundland: no listing articles found")
+
+            html = await page.content()
+            await browser.close()
+
+            soup = BeautifulSoup(html, "html.parser")
+            items = soup.select("article[aria-labelledby^='headline-immo-']")
+            logger.info(f"stadtundland: found {len(items)} raw items")
+
+            for item in items:
+                try:
+                    headline_el = item.select_one("h3[id^='headline-immo-']")
+                    if headline_el:
+                        for sr in headline_el.select("span.sr-only"):
+                            sr.decompose()
+                    headline_text = headline_el.get_text(strip=True) if headline_el else ""
+
+                    zimmer_match = re.search(r'(\d+)\s*Zimmer', headline_text)
+                    zimmer = int(zimmer_match.group(1)) if zimmer_match else None
+                    groesse_match = re.search(r'([\d,]+)\s*m²', headline_text)
+                    groesse = groesse_match.group(1) if groesse_match else "?"
+
+                    titel_parts = headline_text.split(" – ", 1)
+                    titel = titel_parts[1].strip() if len(titel_parts) > 1 else headline_text
+
+                    address_el = item.select_one("p[class*='subHeadline']")
+                    adresse = address_el.get_text(strip=True) if address_el else ""
+                    plz_match = re.search(r'(\d{5})', adresse)
+                    plz = plz_match.group(1) if plz_match else ""
+                    bezirk = adresse or "Berlin"
+
+                    preis = None
+                    for row in item.select("tr"):
+                        th = row.select_one("th")
+                        td = row.select_one("td")
+                        if th and td and "Gesamtmiete" in th.get_text():
+                            preis = parse_preis(td.get_text())
+                            break
+
+                    link_el = item.select_one("a[href^='/wohnungssuche/']")
+                    url = ("https://stadtundland.de" + link_el["href"]) if link_el else ""
+
+                    bild = None
+                    img_el = item.select_one("img")
+                    if img_el:
+                        src = img_el.get("src", "")
+                        if "/_next/image" in src:
+                            parsed = urlparse("https://stadtundland.de" + src)
+                            params = parse_qs(parsed.query)
+                            bild = params.get("url", [None])[0]
+                        elif src.startswith("http"):
+                            bild = src
+
+                    listing = {
+                        "titel": titel or "Stadt und Land Wohnung",
+                        "preis": preis,
+                        "zimmer": zimmer,
+                        "groesse": groesse,
+                        "bezirk": bezirk,
+                        "plz": plz,
+                        "wbs": parse_wbs(titel),
+                        "url": url,
+                        "bild": bild,
+                        "anbieter": "Stadt und Land",
+                    }
+                    listings.append(listing)
+                    logger.info(f"stadtundland parsed: {listing['titel'][:60]} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']}")
+                except Exception as e:
+                    logger.warning(f"Error parsing stadtundland item: {e}")
+    except Exception as e:
+        logger.error(f"Error scraping stadtundland: {e}")
+    return listings
+
+
 async def run_scraper(supabase_url, supabase_key):
     headers = {
         "apikey": supabase_key,
@@ -445,6 +543,7 @@ async def run_scraper(supabase_url, supabase_key):
     all_listings += await scrape_wbm()
     all_listings += await scrape_howoge()
     all_listings += await scrape_gewobag()
+    all_listings += await scrape_stadtundland()
     logger.info(f"Found {len(all_listings)} total listings")
 
     new_listings = []
