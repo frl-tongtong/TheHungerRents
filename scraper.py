@@ -59,9 +59,27 @@ def parse_wbs(titel, features=None):
     return False
 
 
+def _ortsteil_to_plz(ortsteil_text):
+    """Return a representative PLZ for an ortsteil name (used for Degewo which doesn't expose PLZ).
+    If any PLZ for that ortsteil is inside the ring, returns one of those (listing passes ring filter).
+    If all are outside the ring, returns one of those (listing gets correctly rejected).
+    Returns "" if ortsteil is unknown (listing passes through)."""
+    from plz_berlin import PLZ_ORTSTEIL, INNERHALB_RING
+    key = ortsteil_text.lower().strip()
+    matches = []
+    for plz, ortsteil in PLZ_ORTSTEIL.items():
+        for part in ortsteil.split("/"):
+            if part.strip().lower() == key:
+                matches.append(plz)
+                break
+    if not matches:
+        return ""
+    ring_plzs = [p for p in matches if p in INNERHALB_RING]
+    return ring_plzs[0] if ring_plzs else matches[0]
+
+
 async def scrape_degewo():
     listings = []
-    stadt = "Berlin"
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             response = await client.get(
@@ -69,48 +87,45 @@ async def scrape_degewo():
                 headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
             )
             soup = BeautifulSoup(response.text, "html.parser")
-            items = soup.select("article.article-list__item")
+            items = soup.select("a[href*='/immosuche/details/']")
             logger.info(f"degewo: found {len(items)} raw items")
 
             for item in items:
                 try:
-                    title_el = item.select_one("h2.article__title")
-                    meta_el = item.select_one("span.article__meta")
-                    preis_el = item.select_one("div.article__price-tag")
-                    link_el = item.select_one("a[href]")
+                    titel_el = item.select_one("h3")
+                    titel = titel_el.get_text(strip=True) if titel_el else "Degewo Wohnung"
 
-                    all_spans = item.select("span.text")
-                    span_texts = [s.get_text(strip=True) for s in all_spans]
+                    spans = item.select("span")
+                    address_span = spans[0].get_text(strip=True) if spans else ""
+                    ortsteil = address_span.split("|")[-1].strip() if "|" in address_span else ""
+                    bezirk = f"{ortsteil}, Berlin" if ortsteil else "Berlin"
+                    plz = _ortsteil_to_plz(ortsteil)
 
-                    zimmer_text = None
-                    groesse_text = None
-                    for text in span_texts:
+                    preis = None
+                    for span in spans:
+                        text = span.get_text(strip=True)
+                        if "Warmmiete" in text:
+                            preis = parse_preis(text)
+                            break
+
+                    zimmer = None
+                    groesse = "?"
+                    for li in item.select("ul li"):
+                        text = li.get_text(strip=True)
                         if "Zimmer" in text:
-                            zimmer_text = text
-                        elif "m" in text and any(c.isdigit() for c in text):
-                            groesse_text = text
+                            zimmer = parse_zimmer(text)
+                        elif "m²" in text:
+                            groesse = text.replace("m²", "").strip()
 
-                    bezirk = stadt
-                    plz = ""
-                    if meta_el:
-                        meta_text = meta_el.get_text(strip=True)
-                        plz_match = re.search(r'(\d{5})', meta_text)
-                        if plz_match:
-                            plz = plz_match.group(1)
-                        if "|" in meta_text:
-                            bezirk = meta_text.split("|")[-1].strip() + f", {stadt}"
-
-                    titel = title_el.get_text(strip=True) if title_el else "Degewo Wohnung"
-
-                    url = link_el["href"] if link_el else "https://www.degewo.de/immosuche"
+                    url = item["href"]
                     if url and not url.startswith("http"):
                         url = "https://www.degewo.de" + url
 
                     listing = {
                         "titel": titel,
-                        "preis": parse_preis(preis_el.get_text() if preis_el else None),
-                        "zimmer": parse_zimmer(zimmer_text),
-                        "groesse": groesse_text or "?",
+                        "preis": preis,
+                        "zimmer": zimmer,
+                        "groesse": groesse,
                         "bezirk": bezirk,
                         "plz": plz,
                         "wbs": parse_wbs(titel),
@@ -119,7 +134,7 @@ async def scrape_degewo():
                         "anbieter": "degewo",
                     }
                     listings.append(listing)
-                    logger.info(f"degewo parsed: {listing['titel']} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']} | {listing['bezirk']}")
+                    logger.info(f"degewo parsed: {listing['titel']} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']} | {listing['plz']} {listing['bezirk']}")
                 except Exception as e:
                     logger.warning(f"Error parsing degewo item: {e}")
     except Exception as e:
