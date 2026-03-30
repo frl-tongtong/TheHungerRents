@@ -91,8 +91,12 @@ async def scrape_degewo():
                             groesse_text = text
 
                     bezirk = stadt
+                    plz = ""
                     if meta_el:
                         meta_text = meta_el.get_text(strip=True)
+                        plz_match = re.search(r'(\d{5})', meta_text)
+                        if plz_match:
+                            plz = plz_match.group(1)
                         if "|" in meta_text:
                             bezirk = meta_text.split("|")[-1].strip() + f", {stadt}"
 
@@ -108,6 +112,7 @@ async def scrape_degewo():
                         "zimmer": parse_zimmer(zimmer_text),
                         "groesse": groesse_text or "?",
                         "bezirk": bezirk,
+                        "plz": plz,
                         "wbs": parse_wbs(titel),
                         "url": url,
                         "bild": extract_img(item, "https://www.degewo.de"),
@@ -149,7 +154,10 @@ async def scrape_wbm():
 
                     link_el = immo.select_one("a.immo-button-cta[href]")
                     bezirk_el = item.select_one("div.area")
-                    bezirk = (bezirk_el.get_text(strip=True) + f", {stadt}") if bezirk_el else stadt
+                    bezirk_text = bezirk_el.get_text(strip=True) if bezirk_el else ""
+                    plz_match = re.search(r'(\d{5})', bezirk_text)
+                    plz = plz_match.group(1) if plz_match else ""
+                    bezirk = (bezirk_text + f", {stadt}") if bezirk_text else stadt
 
                     titel = title_el.get_text(strip=True) if title_el else "WBM Wohnung"
 
@@ -163,6 +171,7 @@ async def scrape_wbm():
                         "zimmer": parse_zimmer(zimmer_el.get_text() if zimmer_el else None),
                         "groesse": groesse_el.get_text(strip=True) if groesse_el else "?",
                         "bezirk": bezirk,
+                        "plz": plz,
                         "wbs": parse_wbs(titel, features),
                         "url": url,
                         "bild": extract_img(immo, "https://www.wbm.de"),
