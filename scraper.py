@@ -167,7 +167,7 @@ async def scrape_wbm():
                     bezirk_el = item.select_one("div.area")
                     bezirk_text = bezirk_el.get_text(strip=True) if bezirk_el else ""
                     plz_match = re.search(r'(\d{5})', bezirk_text)
-                    plz = plz_match.group(1) if plz_match else ""
+                    plz = plz_match.group(1) if plz_match else _ortsteil_to_plz(bezirk_text)
                     bezirk = (bezirk_text + f", {stadt}") if bezirk_text else stadt
 
                     titel = title_el.get_text(strip=True) if title_el else "WBM Wohnung"
