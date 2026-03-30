@@ -550,6 +550,72 @@ async def scrape_stadtundland():
     return listings
 
 
+async def scrape_grandcity():
+    listings = []
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            response = await client.get(
+                "https://www.grandcityproperty.de/wohnung-berlin",
+                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+            )
+            soup = BeautifulSoup(response.text, "html.parser")
+            items = soup.select("div.each-real-estate-item")
+            logger.info(f"grandcity: found {len(items)} raw items")
+
+            for item in items:
+                try:
+                    nice_url = item.get("data-nice-url", "").strip()
+                    plz_match = re.search(r'_(\d{5})_', nice_url)
+                    plz = plz_match.group(1) if plz_match else ""
+
+                    url = ("https://www.grandcityproperty.de" + nice_url) if nice_url else ""
+
+                    titel_el = item.select_one("h2.name_property")
+                    titel = titel_el.get_text(strip=True) if titel_el else item.get("data-title", "GrandCity Wohnung")
+
+                    address_el = item.select_one("p.address")
+                    bezirk = address_el.get_text(strip=True) if address_el else "Berlin"
+
+                    preis = int(item["data-price"]) if item.get("data-price", "").isdigit() else None
+
+                    zimmer = None
+                    groesse = "?"
+                    for wrapper in item.select("div.additional-wrapper"):
+                        title_el = wrapper.select_one("div.title")
+                        value_el = wrapper.select_one("div.value")
+                        if not title_el or not value_el:
+                            continue
+                        t = title_el.get_text(strip=True)
+                        v = value_el.get_text(strip=True)
+                        if "Zimmer" in t:
+                            zimmer = parse_zimmer(v)
+                        elif "Fläche" in t:
+                            groesse = v.replace("m2", "").replace("m²", "").strip()
+
+                    data_img = item.get("data-img", "")
+                    bild = ("https://www.grandcityproperty.de" + data_img) if data_img else None
+
+                    listing = {
+                        "titel": titel,
+                        "preis": preis,
+                        "zimmer": zimmer,
+                        "groesse": groesse,
+                        "bezirk": bezirk,
+                        "plz": plz,
+                        "wbs": parse_wbs(titel),
+                        "url": url,
+                        "bild": bild,
+                        "anbieter": "GrandCity",
+                    }
+                    listings.append(listing)
+                    logger.info(f"grandcity parsed: {listing['titel'][:60]} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ kalt | {listing['plz']}")
+                except Exception as e:
+                    logger.warning(f"Error parsing grandcity item: {e}")
+    except Exception as e:
+        logger.error(f"Error scraping grandcity: {e}")
+    return listings
+
+
 async def scrape_berlinhaus():
     from plz_berlin import ALL_BERLIN_PLZ
     listings = []
@@ -636,6 +702,7 @@ async def run_scraper(supabase_url, supabase_key):
     all_listings += await scrape_gewobag()
     all_listings += await scrape_stadtundland()
     all_listings += await scrape_berlinhaus()
+    all_listings += await scrape_grandcity()
     logger.info(f"Found {len(all_listings)} total listings")
 
     new_listings = []
