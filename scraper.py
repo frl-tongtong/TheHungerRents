@@ -92,21 +92,17 @@ async def scrape_degewo():
 
             for item in items:
                 try:
-                    titel_el = item.select_one("h3")
-                    titel = titel_el.get_text(strip=True) if titel_el else "Degewo Wohnung"
-
-                    spans = item.select("span")
-                    address_span = spans[0].get_text(strip=True) if spans else ""
-                    ortsteil = address_span.split("|")[-1].strip() if "|" in address_span else ""
+                    address_el = item.select_one("h3")
+                    address_text = address_el.get_text(strip=True) if address_el else ""
+                    ortsteil = address_text.split("|")[-1].strip() if "|" in address_text else ""
                     bezirk = f"{ortsteil}, Berlin" if ortsteil else "Berlin"
                     plz = _ortsteil_to_plz(ortsteil)
 
-                    preis = None
-                    for span in spans:
-                        text = span.get_text(strip=True)
-                        if "Warmmiete" in text:
-                            preis = parse_preis(text)
-                            break
+                    titel_el = item.select_one("h4")
+                    titel = titel_el.get_text(strip=True) if titel_el else "Degewo Wohnung"
+
+                    preis_el = item.select_one("span.amount")
+                    preis = parse_preis(preis_el.get_text() if preis_el else None)
 
                     zimmer = None
                     groesse = "?"
