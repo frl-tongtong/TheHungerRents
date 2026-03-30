@@ -539,6 +539,77 @@ async def scrape_stadtundland():
     return listings
 
 
+async def scrape_berlinhaus():
+    from plz_berlin import ALL_BERLIN_PLZ
+    listings = []
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            page_num = 1
+            while page_num <= 10:
+                url = "https://www.berlinhaus.com/mietangebote/" if page_num == 1 else f"https://www.berlinhaus.com/mietangebote/{page_num}/"
+                response = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
+                soup = BeautifulSoup(response.text, "html.parser")
+                items = soup.select("div.listing-item")
+                logger.info(f"berlinhaus page {page_num}: found {len(items)} raw items")
+                if not items:
+                    break
+
+                for item in items:
+                    try:
+                        location_el = item.select_one("p.location")
+                        location_text = location_el.get_text(strip=True) if location_el else ""
+                        plz_match = re.search(r'(\d{5})', location_text)
+                        plz = plz_match.group(1) if plz_match else ""
+
+                        if plz and plz not in ALL_BERLIN_PLZ:
+                            continue  # skip non-Berlin listings
+
+                        link_el = item.select_one("a[href]")
+                        url = link_el["href"] if link_el else ""
+
+                        title_el = item.select_one("h3 a")
+                        titel = title_el.get_text(strip=True) if title_el else "Berlinhaus Wohnung"
+
+                        specs_el = item.select_one("p.specs")
+                        specs_text = specs_el.get_text(strip=True) if specs_el else ""
+                        groesse_match = re.search(r'([\d,]+)\s*m²', specs_text)
+                        groesse = groesse_match.group(1) if groesse_match else "?"
+                        zimmer_match = re.search(r'(\d+)\s*Zimmer', specs_text)
+                        zimmer = int(zimmer_match.group(1)) if zimmer_match else None
+
+                        price_el = item.select_one("p.price")
+                        preis = parse_preis(price_el.get_text() if price_el else None)
+
+                        img_el = item.select_one("img")
+                        bild = img_el["src"] if img_el and img_el.get("src") else None
+
+                        listing = {
+                            "titel": titel,
+                            "preis": preis,
+                            "zimmer": zimmer,
+                            "groesse": groesse,
+                            "bezirk": location_text,
+                            "plz": plz,
+                            "wbs": parse_wbs(titel),
+                            "url": url,
+                            "bild": bild,
+                            "anbieter": "Berlinhaus",
+                        }
+                        listings.append(listing)
+                        logger.info(f"berlinhaus parsed: {listing['titel'][:60]} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ kalt | {listing['plz']}")
+                    except Exception as e:
+                        logger.warning(f"Error parsing berlinhaus item: {e}")
+
+                # check for next page
+                if not soup.select_one("a.next, a[rel='next']"):
+                    break
+                page_num += 1
+
+    except Exception as e:
+        logger.error(f"Error scraping berlinhaus: {e}")
+    return listings
+
+
 async def run_scraper(supabase_url, supabase_key):
     headers = {
         "apikey": supabase_key,
@@ -553,6 +624,7 @@ async def run_scraper(supabase_url, supabase_key):
     all_listings += await scrape_howoge()
     all_listings += await scrape_gewobag()
     all_listings += await scrape_stadtundland()
+    all_listings += await scrape_berlinhaus()
     logger.info(f"Found {len(all_listings)} total listings")
 
     new_listings = []
