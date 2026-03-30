@@ -25,6 +25,18 @@ def parse_zimmer(text):
     return None
 
 
+def extract_img(item, base_url):
+    img = item.select_one("img")
+    if not img:
+        return None
+    src = img.get("src") or img.get("data-src", "")
+    if not src or src.startswith("data:"):
+        return None
+    if not src.startswith("http"):
+        src = base_url + src
+    return src
+
+
 def parse_wbs(titel, features=None):
     """Check if WBS is required. Returns False or a (min, max) tuple of WBS levels."""
     texts = []
@@ -98,6 +110,7 @@ async def scrape_degewo():
                         "bezirk": bezirk,
                         "wbs": parse_wbs(titel),
                         "url": url,
+                        "bild": extract_img(item, "https://www.degewo.de"),
                         "anbieter": "degewo",
                     }
                     listings.append(listing)
@@ -152,6 +165,7 @@ async def scrape_wbm():
                         "bezirk": bezirk,
                         "wbs": parse_wbs(titel, features),
                         "url": url,
+                        "bild": extract_img(immo, "https://www.wbm.de"),
                         "anbieter": "WBM",
                     }
                     listings.append(listing)
@@ -273,6 +287,7 @@ async def scrape_howoge():
                         "bezirk": bezirk,
                         "wbs": parse_wbs(titel, features),
                         "url": url,
+                        "bild": extract_img(item, "https://www.howoge.de"),
                         "anbieter": "HOWOGE",
                     }
                     listings.append(listing)
@@ -394,6 +409,7 @@ async def scrape_gewobag():
                             "plz": plz,
                             "wbs": parse_wbs(titel, features),
                             "url": url,
+                            "bild": extract_img(item, "https://www.gewobag.de"),
                             "anbieter": "Gewobag",
                         }
                         listings.append(listing)

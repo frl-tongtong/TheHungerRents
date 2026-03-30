@@ -560,13 +560,23 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
                 f"🏢 {listing.get('anbieter', '?')}\n\n"
                 f"🔗 [Zur Wohnung]({listing.get('url', '')})"
             )
+            bild = listing.get("bild")
             try:
-                await context.bot.send_message(
-                    chat_id=user_id, text=msg,
-                    parse_mode="Markdown", disable_web_page_preview=False
-                )
-            except Exception as e:
-                logger.error(f"Could not send to {user_id}: {e}")
+                if bild:
+                    await context.bot.send_photo(
+                        chat_id=user_id, photo=bild, caption=msg,
+                        parse_mode="Markdown"
+                    )
+                else:
+                    raise ValueError("no image")
+            except Exception:
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id, text=msg,
+                        parse_mode="Markdown", disable_web_page_preview=False
+                    )
+                except Exception as e:
+                    logger.error(f"Could not send to {user_id}: {e}")
 
 
 # ─── Main ───────────────────────────────────────────────────
