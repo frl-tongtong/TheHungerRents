@@ -547,7 +547,7 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
                 else:
                     wbs_line = f"📋 WBS {wbs_min}–{wbs_max} erforderlich\n"
             else:
-                wbs_line = ""
+                wbs_line = "📋 Kein WBS erforderlich\n"
 
             # ── Send notification ──
             msg = (
