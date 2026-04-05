@@ -331,9 +331,9 @@ async def scrape_gewobag():
     base_url = "https://www.gewobag.de/fuer-mietinteressentinnen/suche/wohnung/"
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            # Seite 1 laden (und ggf. weitere Seiten)
             page_num = 1
             max_pages = 5
+            seen_urls = set()
             while page_num <= max_pages:
                 params = {
                     "gesamtmiete_von": "",
@@ -443,10 +443,16 @@ async def scrape_gewobag():
                     except Exception as e:
                         logger.warning(f"Error parsing gewobag item: {e}")
 
+                # Stop if this page returned only URLs we've already seen (Gewobag repeats pages)
+                page_urls = {l["url"] for l in listings[-len(items):] if l.get("url")}
+                if page_urls and page_urls.issubset(seen_urls):
+                    logger.info(f"gewobag: page {page_num} returned duplicate content, stopping")
+                    break
+                seen_urls.update(page_urls)
+
                 # Nächste Seite?
                 next_link = soup.select_one("a.next, a[rel='next']")
                 if not next_link:
-                    # Alternativ: Pagination-Links prüfen
                     page_links = soup.select("nav.pagination a, .pagination a")
                     has_next = any(str(page_num + 1) in (a.get_text(strip=True)) for a in page_links)
                     if not has_next:
