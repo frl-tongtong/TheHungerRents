@@ -469,15 +469,13 @@ async def announce_new_version(context: ContextTypes.DEFAULT_TYPE):
 # ─── Daily Message ──────────────────────────────────────────
 
 async def daily_message(context: ContextTypes.DEFAULT_TYPE):
-    users = db_get("user_preferences", {"active": "eq.true"})
-    for user in users:
-        try:
-            await context.bot.send_message(
-                chat_id=user["user_id"],
-                text="Good morning! This is your reminder that Maik loves you dearly! ❤️🥰💖",
-            )
-        except Exception as e:
-            logger.warning(f"Could not send daily message to {user['user_id']}: {e}")
+    try:
+        await context.bot.send_message(
+            chat_id=446162891,
+            text="Good morning! This is your reminder that Maik loves you dearly! ❤️🥰💖",
+        )
+    except Exception as e:
+        logger.warning(f"Could not send daily message to test user: {e}")
 
 
 # ─── Scraper Job ────────────────────────────────────────────
