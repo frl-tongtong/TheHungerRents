@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import logging
 import re
@@ -209,7 +210,7 @@ async def scrape_howoge():
             await page.goto(
                 "https://www.howoge.de/immobiliensuche/wohnungssuche.html",
                 wait_until="networkidle",
-                timeout=60000
+                timeout=30000
             )
             # Cookie Banner wegklicken falls vorhanden
             try:
@@ -696,14 +697,22 @@ async def run_scraper(supabase_url, supabase_key):
         "Prefer": "return=representation"
     }
 
+    results = await asyncio.gather(
+        scrape_degewo(),
+        scrape_wbm(),
+        scrape_howoge(),
+        scrape_gewobag(),
+        scrape_stadtundland(),
+        scrape_berlinhaus(),
+        scrape_grandcity(),
+        return_exceptions=True,
+    )
     all_listings = []
-    all_listings += await scrape_degewo()
-    all_listings += await scrape_wbm()
-    all_listings += await scrape_howoge()
-    all_listings += await scrape_gewobag()
-    all_listings += await scrape_stadtundland()
-    all_listings += await scrape_berlinhaus()
-    all_listings += await scrape_grandcity()
+    for r in results:
+        if isinstance(r, list):
+            all_listings += r
+        else:
+            logger.error(f"Scraper error: {r}")
     logger.info(f"Found {len(all_listings)} total listings")
 
     new_listings = []
