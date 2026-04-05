@@ -87,33 +87,34 @@ async def scrape_degewo():
                 headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
             )
             soup = BeautifulSoup(response.text, "html.parser")
-            items = soup.select("a[href*='/immosuche/details/']")
+            items = soup.select("article.article-list__item--immosearch")
             logger.info(f"degewo: found {len(items)} raw items")
 
             for item in items:
                 try:
-                    address_el = item.select_one("h3")
+                    address_el = item.select_one("span.article__meta")
                     address_text = address_el.get_text(strip=True) if address_el else ""
                     ortsteil = address_text.split("|")[-1].strip() if "|" in address_text else ""
                     bezirk = f"{ortsteil}, Berlin" if ortsteil else "Berlin"
                     plz = _ortsteil_to_plz(ortsteil)
 
-                    titel_el = item.select_one("h4")
+                    titel_el = item.select_one("h2.article__title")
                     titel = titel_el.get_text(strip=True) if titel_el else "Degewo Wohnung"
 
-                    preis_el = item.select_one("span.amount")
+                    preis_el = item.select_one("div.article__price-tag span.price")
                     preis = parse_preis(preis_el.get_text() if preis_el else None)
 
                     zimmer = None
                     groesse = "?"
-                    for li in item.select("ul li"):
-                        text = li.get_text(strip=True)
+                    for span in item.select("ul.article__properties li span.text"):
+                        text = span.get_text(strip=True)
                         if "Zimmer" in text:
                             zimmer = parse_zimmer(text)
                         elif "m²" in text:
                             groesse = text.replace("m²", "").strip()
 
-                    url = item["href"]
+                    link_el = item.select_one("a[href*='/immosuche/details/']")
+                    url = link_el["href"] if link_el else ""
                     if url and not url.startswith("http"):
                         url = "https://www.degewo.de" + url
 
