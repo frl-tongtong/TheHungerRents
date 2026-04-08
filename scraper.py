@@ -640,7 +640,8 @@ async def scrape_berlinhaus():
                     break
 
                 if page_num == 1 and items:
-                    logger.info(f"berlinhaus DEBUG first item HTML: {items[0]}")
+                    logger.info(f"berlinhaus DEBUG first item HTML: {str(items[0])[:5000]}")
+                    logger.info(f"berlinhaus DEBUG first item TEXT: {items[0].get_text(' ', strip=True)[:1000]}")
 
                 for item in items:
                     try:
