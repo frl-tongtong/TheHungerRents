@@ -639,6 +639,9 @@ async def scrape_berlinhaus():
                 if not items:
                     break
 
+                if page_num == 1 and items:
+                    logger.info(f"berlinhaus DEBUG first item HTML: {items[0]}")
+
                 for item in items:
                     try:
                         full_text = item.get_text(" ", strip=True)
