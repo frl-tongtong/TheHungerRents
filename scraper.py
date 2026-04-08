@@ -700,6 +700,9 @@ async def scrape_berlinhaus():
     return listings
 
 
+SCRAPER_NAMES = ["Degewo", "WBM", "HOWOGE", "Gewobag", "Stadt und Land", "Berlinhaus", "Grand City"]
+
+
 async def run_scraper(supabase_url, supabase_key):
     headers = {
         "apikey": supabase_key,
@@ -718,12 +721,16 @@ async def run_scraper(supabase_url, supabase_key):
         scrape_grandcity(),
         return_exceptions=True,
     )
+
+    scraper_stats = []
     all_listings = []
-    for r in results:
+    for name, r in zip(SCRAPER_NAMES, results):
         if isinstance(r, list):
+            scraper_stats.append({"name": name, "count": len(r), "error": None})
             all_listings += r
         else:
-            logger.error(f"Scraper error: {r}")
+            scraper_stats.append({"name": name, "count": 0, "error": str(r)})
+            logger.error(f"Scraper error ({name}): {r}")
     logger.info(f"Found {len(all_listings)} total listings")
 
     new_listings = []
@@ -749,4 +756,4 @@ async def run_scraper(supabase_url, supabase_key):
                 logger.error(f"DB error: {e}")
 
     logger.info(f"Found {len(new_listings)} NEW listings")
-    return new_listings
+    return new_listings, scraper_stats

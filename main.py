@@ -470,19 +470,72 @@ async def announce_new_version(context: ContextTypes.DEFAULT_TYPE):
 
 async def daily_message(context: ContextTypes.DEFAULT_TYPE):
     try:
+        health_lines = []
+        for stat in last_scraper_stats:
+            if stat["error"]:
+                icon = "❌"
+                detail = f"error"
+            elif stat["count"] == 0:
+                zeros = consecutive_zeros.get(stat["name"], 0)
+                icon = "⚠️" if zeros >= ZERO_ALERT_THRESHOLD else "✅"
+                detail = f"0 listings ({zeros}x in a row)"
+            else:
+                icon = "✅"
+                detail = f"{stat['count']} listings"
+            health_lines.append(f"{icon} {stat['name']}: {detail}")
+
+        health_text = "\n\n*Scraper Health:*\n" + "\n".join(health_lines) if health_lines else ""
+
         await context.bot.send_message(
-            chat_id=446162891,
-            text="Good morning! This is your reminder that Maik loves you dearly! ❤️🥰💖",
+            chat_id=ADMIN_USER_ID,
+            text=f"Good morning! This is your reminder that Maik loves you dearly! ❤️🥰💖{health_text}",
+            parse_mode="Markdown",
         )
     except Exception as e:
         logger.warning(f"Could not send daily message to test user: {e}")
 
 
+# ─── Scraper Health Tracking ────────────────────────────────
+ADMIN_USER_ID = 446162891
+consecutive_zeros: dict[str, int] = {}
+last_scraper_stats: list[dict] = []
+
+ZERO_ALERT_THRESHOLD = 3  # alert after this many consecutive zero-result runs
+
+
 # ─── Scraper Job ────────────────────────────────────────────
 
 async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
+    global last_scraper_stats
     logger.info("Running scraper...")
-    new_listings = await run_scraper(SUPABASE_URL, SUPABASE_KEY)
+    new_listings, scraper_stats = await run_scraper(SUPABASE_URL, SUPABASE_KEY)
+    last_scraper_stats = scraper_stats
+
+    for stat in scraper_stats:
+        name = stat["name"]
+        if stat["error"]:
+            consecutive_zeros[name] = consecutive_zeros.get(name, 0) + 1
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_USER_ID,
+                    text=f"⚠️ Scraper error: *{name}*\n`{stat['error']}`",
+                    parse_mode="Markdown",
+                )
+            except Exception as e:
+                logger.warning(f"Could not send scraper alert: {e}")
+        elif stat["count"] == 0:
+            consecutive_zeros[name] = consecutive_zeros.get(name, 0) + 1
+            if consecutive_zeros[name] == ZERO_ALERT_THRESHOLD:
+                try:
+                    await context.bot.send_message(
+                        chat_id=ADMIN_USER_ID,
+                        text=f"⚠️ *{name}* has returned 0 listings for {ZERO_ALERT_THRESHOLD} consecutive runs. Scraper may be broken.",
+                        parse_mode="Markdown",
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not send scraper alert: {e}")
+        else:
+            consecutive_zeros[name] = 0
 
     if not new_listings:
         logger.info("No new listings found.")
