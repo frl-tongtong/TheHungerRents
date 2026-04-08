@@ -628,79 +628,72 @@ async def scrape_berlinhaus():
     from plz_berlin import ALL_BERLIN_PLZ
     listings = []
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            page_num = 1
-            while page_num <= 10:
-                url = "https://www.berlinhaus.com/mietangebote/" if page_num == 1 else f"https://www.berlinhaus.com/mietangebote/{page_num}/"
-                response = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
-                soup = BeautifulSoup(response.text, "html.parser")
-                items = soup.select("div.jet-listing-grid__item")
-                logger.info(f"berlinhaus page {page_num}: found {len(items)} raw items")
-                if not items:
-                    break
+        from playwright.async_api import async_playwright
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto("https://www.berlinhaus.com/mietangebote/", wait_until="networkidle", timeout=60000)
+            try:
+                await page.click("button[id*='accept'], #CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll", timeout=5000)
+            except:
+                pass
+            try:
+                await page.wait_for_selector("div.jet-listing-grid__item", timeout=30000)
+            except:
+                logger.warning("berlinhaus: no listing items found after JS render")
 
-                if page_num == 1 and items:
-                    item0 = items[0]
-                    logger.info(f"berlinhaus DEBUG text: {item0.get_text(' ', strip=True)[:500]}")
-                    logger.info(f"berlinhaus DEBUG classes: {[t.get('class') for t in item0.find_all(True) if t.get('class')][:30]}")
-                    logger.info(f"berlinhaus DEBUG links: {[(a.get_text(strip=True)[:50], a.get('href','')[:80]) for a in item0.select('a')]}")
-                    logger.info(f"berlinhaus DEBUG headings: {[h.get_text(strip=True) for h in item0.select('h1,h2,h3,h4,h5')]}")
+            html = await page.content()
+            await browser.close()
 
-                for item in items:
-                    try:
-                        full_text = item.get_text(" ", strip=True)
+            soup = BeautifulSoup(html, "html.parser")
+            items = soup.select("div.jet-listing-grid__item")
+            logger.info(f"berlinhaus: found {len(items)} raw items")
 
-                        location_el = item.select_one("h3 + div, h3 ~ div")
-                        # location is the div right after h3 containing PLZ pattern
-                        location_text = ""
-                        for div in item.select("div"):
-                            if re.search(r'\d{5}', div.get_text()):
-                                location_text = div.get_text(strip=True)
-                                break
-                        plz_match = re.search(r'(\d{5})', location_text)
-                        plz = plz_match.group(1) if plz_match else ""
+            for item in items:
+                try:
+                    full_text = item.get_text(" ", strip=True)
 
-                        if plz and plz not in ALL_BERLIN_PLZ:
-                            continue  # skip non-Berlin listings
+                    link_el = item.select_one("a[href*='/immobilie/']")
+                    if not link_el:
+                        continue  # skip non-listing items (e.g. news posts)
+                    url = link_el["href"]
+                    titel = link_el.get_text(strip=True) or "Berlinhaus Wohnung"
 
-                        link_el = item.select_one("a[href]")
-                        url = link_el["href"] if link_el else ""
+                    plz_match = re.search(r'(\d{5})', full_text)
+                    plz = plz_match.group(1) if plz_match else ""
 
-                        title_el = item.select_one("h3 a")
-                        titel = title_el.get_text(strip=True) if title_el else "Berlinhaus Wohnung"
+                    if plz and plz not in ALL_BERLIN_PLZ:
+                        continue  # skip non-Berlin listings
 
-                        groesse_match = re.search(r'([\d,]+)\s*m²', full_text)
-                        groesse = groesse_match.group(1) if groesse_match else "?"
-                        zimmer_match = re.search(r'(\d+)\s*Zimmer', full_text)
-                        zimmer = int(zimmer_match.group(1)) if zimmer_match else None
+                    location_match = re.search(r'(\d{5}[^|,\n]*)', full_text)
+                    location_text = location_match.group(1).strip() if location_match else plz
 
-                        preis_match = re.search(r'Kaltmiete\s*([\d.,]+)', full_text)
-                        preis = parse_preis(preis_match.group(1)) if preis_match else None
+                    groesse_match = re.search(r'([\d,]+)\s*m²', full_text)
+                    groesse = groesse_match.group(1) if groesse_match else "?"
+                    zimmer_match = re.search(r'(\d+)\s*Zimmer', full_text)
+                    zimmer = int(zimmer_match.group(1)) if zimmer_match else None
+                    preis_match = re.search(r'Kaltmiete\s*([\d.,]+)', full_text)
+                    preis = parse_preis(preis_match.group(1)) if preis_match else None
 
-                        img_el = item.select_one("img")
-                        bild = img_el["src"] if img_el and img_el.get("src") else None
+                    img_el = item.select_one("img")
+                    bild = img_el["src"] if img_el and img_el.get("src") else None
 
-                        listing = {
-                            "titel": titel,
-                            "preis": preis,
-                            "zimmer": zimmer,
-                            "groesse": groesse,
-                            "bezirk": location_text,
-                            "plz": plz,
-                            "wbs": parse_wbs(titel),
-                            "url": url,
-                            "bild": bild,
-                            "anbieter": "Berlinhaus",
-                        }
-                        listings.append(listing)
-                        logger.info(f"berlinhaus parsed: {listing['titel'][:60]} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ kalt | {listing['plz']}")
-                    except Exception as e:
-                        logger.warning(f"Error parsing berlinhaus item: {e}")
-
-                # check for next page
-                if not soup.select_one("a.next, a[rel='next']"):
-                    break
-                page_num += 1
+                    listing = {
+                        "titel": titel,
+                        "preis": preis,
+                        "zimmer": zimmer,
+                        "groesse": groesse,
+                        "bezirk": location_text,
+                        "plz": plz,
+                        "wbs": parse_wbs(titel),
+                        "url": url,
+                        "bild": bild,
+                        "anbieter": "Berlinhaus",
+                    }
+                    listings.append(listing)
+                    logger.info(f"berlinhaus parsed: {listing['titel'][:60]} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ kalt | {listing['plz']}")
+                except Exception as e:
+                    logger.warning(f"Error parsing berlinhaus item: {e}")
 
     except Exception as e:
         logger.error(f"Error scraping berlinhaus: {e}")
