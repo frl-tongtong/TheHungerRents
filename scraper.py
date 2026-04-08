@@ -649,9 +649,9 @@ async def scrape_berlinhaus():
             items = soup.select("div.jet-listing-grid__item")
             logger.info(f"berlinhaus: found {len(items)} raw items")
 
-            if items:
-                logger.info(f"berlinhaus DEBUG links in first item: {[(a.get('href',''), a.get_text(strip=True)[:40]) for a in items[0].select('a')]}")
-                logger.info(f"berlinhaus DEBUG text first item: {items[0].get_text(' ', strip=True)[:300]}")
+            logger.info(f"berlinhaus DEBUG all item links: {[(a.get('href','')[:80], a.get_text(strip=True)[:30]) for item in items for a in item.select('a')][:20]}")
+            all_links = soup.select("a[href*='berlinhaus.com']")
+            logger.info(f"berlinhaus DEBUG all page links: {[a.get('href','')[:80] for a in all_links][:30]}")
 
             for item in items:
                 try:
