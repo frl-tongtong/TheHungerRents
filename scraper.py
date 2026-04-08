@@ -629,29 +629,39 @@ async def scrape_berlinhaus():
     listings = []
     try:
         from playwright.async_api import async_playwright
+        ajax_responses = []
+
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
+
+            async def capture_response(response):
+                if "admin-ajax" in response.url or "jet-engine" in response.url or "wp-json" in response.url:
+                    try:
+                        body = await response.text()
+                        ajax_responses.append({"url": response.url, "body": body[:2000]})
+                    except:
+                        pass
+
+            page.on("response", capture_response)
+
             await page.goto("https://www.berlinhaus.com/mietangebote/", wait_until="networkidle", timeout=60000)
             try:
                 await page.click("button[id*='accept'], #CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll", timeout=5000)
+                await page.wait_for_timeout(3000)
             except:
                 pass
-            try:
-                await page.wait_for_selector("div.jet-listing-grid__item", timeout=30000)
-            except:
-                logger.warning("berlinhaus: no listing items found after JS render")
+
+            logger.info(f"berlinhaus DEBUG ajax calls: {[r['url'] for r in ajax_responses]}")
+            for r in ajax_responses:
+                logger.info(f"berlinhaus DEBUG ajax body ({r['url'][:60]}): {r['body'][:300]}")
 
             html = await page.content()
             await browser.close()
 
             soup = BeautifulSoup(html, "html.parser")
             items = soup.select("div.jet-listing-grid__item")
-            logger.info(f"berlinhaus: found {len(items)} raw items")
-
-            logger.info(f"berlinhaus DEBUG all item links: {[(a.get('href','')[:80], a.get_text(strip=True)[:30]) for item in items for a in item.select('a')][:20]}")
-            all_links = soup.select("a[href*='berlinhaus.com']")
-            logger.info(f"berlinhaus DEBUG all page links: {[a.get('href','')[:80] for a in all_links][:30]}")
+            logger.info(f"berlinhaus: found {len(items)} raw items after networkidle")
 
             for item in items:
                 try:
