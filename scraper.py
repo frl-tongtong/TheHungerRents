@@ -640,8 +640,11 @@ async def scrape_berlinhaus():
                     break
 
                 if page_num == 1 and items:
-                    logger.info(f"berlinhaus DEBUG first item HTML: {str(items[0])[:5000]}")
-                    logger.info(f"berlinhaus DEBUG first item TEXT: {items[0].get_text(' ', strip=True)[:1000]}")
+                    item0 = items[0]
+                    logger.info(f"berlinhaus DEBUG text: {item0.get_text(' ', strip=True)[:500]}")
+                    logger.info(f"berlinhaus DEBUG classes: {[t.get('class') for t in item0.find_all(True) if t.get('class')][:30]}")
+                    logger.info(f"berlinhaus DEBUG links: {[(a.get_text(strip=True)[:50], a.get('href','')[:80]) for a in item0.select('a')]}")
+                    logger.info(f"berlinhaus DEBUG headings: {[h.get_text(strip=True) for h in item0.select('h1,h2,h3,h4,h5')]}")
 
                 for item in items:
                     try:
