@@ -634,15 +634,22 @@ async def scrape_berlinhaus():
                 url = "https://www.berlinhaus.com/mietangebote/" if page_num == 1 else f"https://www.berlinhaus.com/mietangebote/{page_num}/"
                 response = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
                 soup = BeautifulSoup(response.text, "html.parser")
-                items = soup.select("div.listing-item")
+                items = soup.select("div.jet-listing-grid__item")
                 logger.info(f"berlinhaus page {page_num}: found {len(items)} raw items")
                 if not items:
                     break
 
                 for item in items:
                     try:
-                        location_el = item.select_one("p.location")
-                        location_text = location_el.get_text(strip=True) if location_el else ""
+                        full_text = item.get_text(" ", strip=True)
+
+                        location_el = item.select_one("h3 + div, h3 ~ div")
+                        # location is the div right after h3 containing PLZ pattern
+                        location_text = ""
+                        for div in item.select("div"):
+                            if re.search(r'\d{5}', div.get_text()):
+                                location_text = div.get_text(strip=True)
+                                break
                         plz_match = re.search(r'(\d{5})', location_text)
                         plz = plz_match.group(1) if plz_match else ""
 
@@ -655,15 +662,13 @@ async def scrape_berlinhaus():
                         title_el = item.select_one("h3 a")
                         titel = title_el.get_text(strip=True) if title_el else "Berlinhaus Wohnung"
 
-                        specs_el = item.select_one("p.specs")
-                        specs_text = specs_el.get_text(strip=True) if specs_el else ""
-                        groesse_match = re.search(r'([\d,]+)\s*m²', specs_text)
+                        groesse_match = re.search(r'([\d,]+)\s*m²', full_text)
                         groesse = groesse_match.group(1) if groesse_match else "?"
-                        zimmer_match = re.search(r'(\d+)\s*Zimmer', specs_text)
+                        zimmer_match = re.search(r'(\d+)\s*Zimmer', full_text)
                         zimmer = int(zimmer_match.group(1)) if zimmer_match else None
 
-                        price_el = item.select_one("p.price")
-                        preis = parse_preis(price_el.get_text() if price_el else None)
+                        preis_match = re.search(r'Kaltmiete\s*([\d.,]+)', full_text)
+                        preis = parse_preis(preis_match.group(1)) if preis_match else None
 
                         img_el = item.select_one("img")
                         bild = img_el["src"] if img_el and img_el.get("src") else None
