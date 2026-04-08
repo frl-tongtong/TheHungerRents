@@ -620,7 +620,7 @@ def main():
     app.add_handler(CommandHandler("pause", pause))
     app.job_queue.run_once(announce_new_version, when=3)
     app.job_queue.run_daily(daily_message, time=time(8, 0))
-    app.job_queue.run_repeating(scraper_job, interval=120, first=10)
+    app.job_queue.run_repeating(scraper_job, interval=120, first=10, job_kwargs={"max_instances": 2})
 
     logger.info("TheHungerRents is running 🏹")
     webhook_url = os.environ.get("WEBHOOK_URL")
