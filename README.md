@@ -9,6 +9,9 @@ Every 2 minutes, the bot scrapes four major Berlin municipal housing providers:
 - **WBM**
 - **HOWOGE**
 - **Gewobag**
+- **Stadt und Land**
+- **Berlinhaus**
+- **Grand City Property**
 
 New listings are matched against each user's saved preferences and sent as Telegram messages instantly.
 
