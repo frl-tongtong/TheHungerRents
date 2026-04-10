@@ -637,6 +637,7 @@ async def scrape_berlinhaus():
             await page.goto("https://www.berlinhaus.com/mietangebote/", wait_until="networkidle", timeout=60000)
             try:
                 await page.click("button[id*='accept'], #CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll", timeout=5000)
+                await page.wait_for_load_state("networkidle", timeout=15000)
             except:
                 pass
 
@@ -646,6 +647,11 @@ async def scrape_berlinhaus():
             soup = BeautifulSoup(html, "html.parser")
             items = soup.select("div.jet-listing-grid__item")
             logger.info(f"berlinhaus: found {len(items)} items")
+
+            # debug: log first item's links to verify URL pattern
+            if items:
+                first_links = [a["href"] for a in items[0].select("a[href]")]
+                logger.info(f"berlinhaus DEBUG first item links: {first_links}")
 
             for item in items:
                 try:
