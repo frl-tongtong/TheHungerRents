@@ -508,7 +508,13 @@ ZERO_ALERT_THRESHOLD = 3  # alert after this many consecutive zero-result runs
 async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
     global last_scraper_stats
     logger.info("Running scraper...")
-    new_listings, scraper_stats = await run_scraper(SUPABASE_URL, SUPABASE_KEY)
+    try:
+        new_listings, scraper_stats = await asyncio.wait_for(
+            run_scraper(SUPABASE_URL, SUPABASE_KEY), timeout=115
+        )
+    except asyncio.TimeoutError:
+        logger.error("scraper_job timed out after 115s")
+        return
     last_scraper_stats = scraper_stats
 
     for stat in scraper_stats:
@@ -673,7 +679,7 @@ def main():
     app.add_handler(CommandHandler("pause", pause))
     app.job_queue.run_once(announce_new_version, when=3)
     app.job_queue.run_daily(daily_message, time=time(8, 0))
-    app.job_queue.run_repeating(scraper_job, interval=120, first=10, job_kwargs={"max_instances": 2})
+    app.job_queue.run_repeating(scraper_job, interval=120, first=10, job_kwargs={"max_instances": 1})
 
     logger.info("TheHungerRents is running 🏹")
     webhook_url = os.environ.get("WEBHOOK_URL")

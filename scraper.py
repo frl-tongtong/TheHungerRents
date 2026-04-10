@@ -629,39 +629,23 @@ async def scrape_berlinhaus():
     listings = []
     try:
         from playwright.async_api import async_playwright
-        ajax_responses = []
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
 
-            async def capture_response(response):
-                if "admin-ajax" in response.url or "jet-engine" in response.url or "wp-json" in response.url:
-                    try:
-                        body = await response.text()
-                        ajax_responses.append({"url": response.url, "body": body[:2000]})
-                    except:
-                        pass
-
-            page.on("response", capture_response)
-
             await page.goto("https://www.berlinhaus.com/mietangebote/", wait_until="networkidle", timeout=60000)
             try:
                 await page.click("button[id*='accept'], #CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll", timeout=5000)
-                await page.wait_for_timeout(3000)
             except:
                 pass
-
-            logger.info(f"berlinhaus DEBUG ajax calls: {[r['url'] for r in ajax_responses]}")
-            for r in ajax_responses:
-                logger.info(f"berlinhaus DEBUG ajax body ({r['url'][:60]}): {r['body'][:300]}")
 
             html = await page.content()
             await browser.close()
 
             soup = BeautifulSoup(html, "html.parser")
             items = soup.select("div.jet-listing-grid__item")
-            logger.info(f"berlinhaus: found {len(items)} raw items after networkidle")
+            logger.info(f"berlinhaus: found {len(items)} items")
 
             for item in items:
                 try:
@@ -705,7 +689,6 @@ async def scrape_berlinhaus():
                         "anbieter": "Berlinhaus",
                     }
                     listings.append(listing)
-                    logger.info(f"berlinhaus parsed: {listing['titel'][:60]} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ kalt | {listing['plz']}")
                 except Exception as e:
                     logger.warning(f"Error parsing berlinhaus item: {e}")
 
