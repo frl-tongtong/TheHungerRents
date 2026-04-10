@@ -648,10 +648,9 @@ async def scrape_berlinhaus():
             items = soup.select("div.jet-listing-grid__item")
             logger.info(f"berlinhaus: found {len(items)} items")
 
-            # debug: log first item's links to verify URL pattern
-            if items:
-                first_links = [a["href"] for a in items[0].select("a[href]")]
-                logger.info(f"berlinhaus DEBUG first item links: {first_links}")
+            # debug: log all unique link patterns across all items
+            all_links = list({a["href"] for item in items for a in item.select("a[href]")})
+            logger.info(f"berlinhaus DEBUG all links ({len(all_links)}): {all_links[:20]}")
 
             for item in items:
                 try:
