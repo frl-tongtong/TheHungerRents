@@ -20,9 +20,7 @@ import sentry_sdk
 # ─── Configure Sentry exception tracking ────────────────────────────────────────────────
 
 sentry_sdk.init(
-    dsn="https://faa36a5c186db5947aedd443f436d22a@o4511205614747648.ingest.de.sentry.io/4511205621235792",
-    # Add data like request headers and IP for users,
-    # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
+    dsn=os.environ.get("SENTRY_DSN"),
     send_default_pii=True,
 )
 
