@@ -15,6 +15,17 @@ from telegram.ext import (
 from scraper import run_scraper
 from plz_berlin import INNERHALB_RING, BEZIRKE
 
+import sentry_sdk
+
+# ─── Configure Sentry exception tracking ────────────────────────────────────────────────
+
+sentry_sdk.init(
+    dsn="https://faa36a5c186db5947aedd443f436d22a@o4511205614747648.ingest.de.sentry.io/4511205621235792",
+    # Add data like request headers and IP for users,
+    # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
+    send_default_pii=True,
+)
+
 # ─── Logging ────────────────────────────────────────────────
 _formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
 
