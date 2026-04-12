@@ -26,6 +26,8 @@ sentry_sdk.init(
     send_default_pii=True,
 )
 
+err = 1 / 0
+
 # ─── Logging ────────────────────────────────────────────────
 _formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
 
