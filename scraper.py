@@ -6,10 +6,31 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-# Limit concurrent Playwright browser launches to avoid EAGAIN (errno 11)
-# on resource-constrained containers (Railway). Serialises the three
-# JS-rendered scrapers so only one Chromium process starts at a time.
-_playwright_semaphore = asyncio.Semaphore(1)
+# Shared Playwright browser — launched once, reused across all scraper runs.
+# Avoids the overhead and instability of spawning a new Chromium process every
+# 2 minutes on Railway's memory-constrained containers.
+_playwright_semaphore = asyncio.Semaphore(1)  # serialise page creation
+_playwright_instance = None
+_playwright_browser = None
+
+
+async def _get_browser():
+    """Return the shared Chromium browser, (re)launching if needed."""
+    global _playwright_instance, _playwright_browser
+    from playwright.async_api import async_playwright
+    if _playwright_browser is None or not _playwright_browser.is_connected():
+        if _playwright_instance is not None:
+            try:
+                await _playwright_instance.stop()
+            except Exception:
+                pass
+        _playwright_instance = await async_playwright().start()
+        _playwright_browser = await _playwright_instance.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
+        )
+        logger.info("Playwright browser (re)launched")
+    return _playwright_browser
 
 
 def parse_preis(text):
@@ -208,14 +229,10 @@ async def scrape_howoge():
     listings = []
     stadt = "Berlin"
     try:
-        from playwright.async_api import async_playwright
         async with _playwright_semaphore:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=["--no-sandbox", "--disable-dev-shm-usage"],
-                )
-                page = await browser.new_page()
+            browser = await _get_browser()
+            page = await browser.new_page()
+            try:
                 await page.goto(
                     "https://www.howoge.de/immobiliensuche/wohnungssuche.html",
                     wait_until="domcontentloaded",
@@ -245,7 +262,8 @@ async def scrape_howoge():
                         logger.warning("howoge: no listing elements found at all")
 
                 html = await page.content()
-                await browser.close()
+            finally:
+                await page.close()
 
             soup = BeautifulSoup(html, "html.parser")
             items = soup.select("div.flat-single-grid-item")
@@ -476,18 +494,14 @@ async def scrape_gewobag():
 async def scrape_stadtundland():
     listings = []
     try:
-        from playwright.async_api import async_playwright
         from urllib.parse import urlparse, parse_qs
         async with _playwright_semaphore:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=["--no-sandbox", "--disable-dev-shm-usage"],
-                )
-                page = await browser.new_page()
+            browser = await _get_browser()
+            page = await browser.new_page()
+            try:
                 await page.goto(
                     "https://stadtundland.de/wohnungssuche?district=all",
-                    wait_until="networkidle",
+                    wait_until="domcontentloaded",
                     timeout=60000
                 )
                 try:
@@ -500,7 +514,8 @@ async def scrape_stadtundland():
                     logger.warning("stadtundland: no listing articles found")
 
                 html = await page.content()
-                await browser.close()
+            finally:
+                await page.close()
 
             soup = BeautifulSoup(html, "html.parser")
             items = soup.select("article[aria-labelledby^='headline-immo-']")
@@ -641,17 +656,11 @@ async def scrape_berlinhaus():
     from plz_berlin import ALL_BERLIN_PLZ
     listings = []
     try:
-        from playwright.async_api import async_playwright
-
         async with _playwright_semaphore:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=["--no-sandbox", "--disable-dev-shm-usage"],
-                )
-                page = await browser.new_page()
-
-                await page.goto("https://www.berlinhaus.com/mietangebote/", wait_until="networkidle", timeout=60000)
+            browser = await _get_browser()
+            page = await browser.new_page()
+            try:
+                await page.goto("https://www.berlinhaus.com/mietangebote/", wait_until="domcontentloaded", timeout=60000)
                 try:
                     await page.click("button[id*='accept'], #CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll", timeout=5000)
                     await page.wait_for_load_state("networkidle", timeout=15000)
@@ -659,7 +668,8 @@ async def scrape_berlinhaus():
                     pass
 
                 html = await page.content()
-                await browser.close()
+            finally:
+                await page.close()
 
             soup = BeautifulSoup(html, "html.parser")
             items = soup.select("div.jet-listing-grid__item")
