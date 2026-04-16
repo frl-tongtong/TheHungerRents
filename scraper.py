@@ -211,7 +211,10 @@ async def scrape_howoge():
         from playwright.async_api import async_playwright
         async with _playwright_semaphore:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=["--no-sandbox", "--disable-dev-shm-usage"],
+                )
                 page = await browser.new_page()
                 await page.goto(
                     "https://www.howoge.de/immobiliensuche/wohnungssuche.html",
@@ -477,7 +480,10 @@ async def scrape_stadtundland():
         from urllib.parse import urlparse, parse_qs
         async with _playwright_semaphore:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=["--no-sandbox", "--disable-dev-shm-usage"],
+                )
                 page = await browser.new_page()
                 await page.goto(
                     "https://stadtundland.de/wohnungssuche?district=all",
@@ -639,7 +645,10 @@ async def scrape_berlinhaus():
 
         async with _playwright_semaphore:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=["--no-sandbox", "--disable-dev-shm-usage"],
+                )
                 page = await browser.new_page()
 
                 await page.goto("https://www.berlinhaus.com/mietangebote/", wait_until="networkidle", timeout=60000)
