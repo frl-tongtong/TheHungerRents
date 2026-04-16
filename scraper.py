@@ -771,4 +771,14 @@ async def run_scraper(supabase_url, supabase_key):
                 logger.error(f"DB error: {e}")
 
     logger.info(f"Found {len(new_listings)} NEW listings")
+
+    # Count new listings per scraper (normalise name for matching)
+    new_by_anbieter: dict[str, int] = {}
+    for listing in new_listings:
+        key = listing.get("anbieter", "").lower().replace(" ", "")
+        new_by_anbieter[key] = new_by_anbieter.get(key, 0) + 1
+    for stat in scraper_stats:
+        key = stat["name"].lower().replace(" ", "")
+        stat["new_count"] = new_by_anbieter.get(key, 0)
+
     return new_listings, scraper_stats

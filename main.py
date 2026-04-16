@@ -484,14 +484,15 @@ async def daily_message(context: ContextTypes.DEFAULT_TYPE):
         for stat in last_scraper_stats:
             if stat["error"]:
                 icon = "❌"
-                detail = f"error"
+                detail = "error"
             elif stat["count"] == 0:
                 zeros = consecutive_zeros.get(stat["name"], 0)
-                icon = "⚠️" if zeros >= ZERO_ALERT_THRESHOLD else "✅"
-                detail = f"0 listings ({zeros}x in a row)"
+                icon = "⚠️" if zeros >= ZERO_ALERT_THRESHOLD else "🟡"
+                detail = f"0 listings found on site ({zeros}x in a row)"
             else:
+                new = stat.get("new_count", 0)
                 icon = "✅"
-                detail = f"{stat['count']} listings"
+                detail = f"{stat['count']} found, {new} new"
             health_lines.append(f"{icon} {stat['name']}: {detail}")
 
         health_text = "\n\n*Scraper Health:*\n" + "\n".join(health_lines) if health_lines else ""
@@ -545,7 +546,7 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await context.bot.send_message(
                         chat_id=ADMIN_USER_ID,
-                        text=f"⚠️ *{name}* has returned 0 listings for {ZERO_ALERT_THRESHOLD} consecutive runs. Scraper may be broken.",
+                        text=f"⚠️ *{name}* found 0 listings on the website for {ZERO_ALERT_THRESHOLD} consecutive runs. Scraper may be broken.",
                         parse_mode="Markdown",
                     )
                 except Exception as e:
