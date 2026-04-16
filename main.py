@@ -37,6 +37,7 @@ _stderr_handler.setLevel(logging.ERROR)
 _stderr_handler.setFormatter(_formatter)
 
 logging.basicConfig(level=logging.INFO, handlers=[_stdout_handler, _stderr_handler])
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # ─── Config ─────────────────────────────────────────────────

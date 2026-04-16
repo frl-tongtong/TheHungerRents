@@ -218,8 +218,8 @@ async def scrape_howoge():
                 page = await browser.new_page()
                 await page.goto(
                     "https://www.howoge.de/immobiliensuche/wohnungssuche.html",
-                    wait_until="networkidle",
-                    timeout=30000
+                    wait_until="domcontentloaded",
+                    timeout=60000
                 )
                 # Cookie Banner wegklicken falls vorhanden
                 try:
