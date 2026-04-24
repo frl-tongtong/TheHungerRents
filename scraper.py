@@ -86,6 +86,14 @@ def parse_wbs(titel, features=None):
     return False
 
 
+_ORTSTEIL_ALIAS = {
+    "allendeviertel": "12685",  # Marzahn
+    "dammvorstadt": "13597",    # Spandau Altstadt
+    "marzahn nord": "12679",
+    "marzahn süd": "12689",
+}
+
+
 def _ortsteil_to_plz(ortsteil_text):
     """Return a representative PLZ for an ortsteil name (used for Degewo which doesn't expose PLZ).
     If any PLZ for that ortsteil is inside the ring, returns one of those (listing passes ring filter).
@@ -93,12 +101,28 @@ def _ortsteil_to_plz(ortsteil_text):
     Returns "" if ortsteil is unknown (listing passes through)."""
     from plz_berlin import PLZ_ORTSTEIL, INNERHALB_RING
     key = ortsteil_text.lower().strip()
+
+    if key in _ORTSTEIL_ALIAS:
+        return _ORTSTEIL_ALIAS[key]
+
     matches = []
     for plz, ortsteil in PLZ_ORTSTEIL.items():
         for part in ortsteil.split("/"):
             if part.strip().lower() == key:
                 matches.append(plz)
                 break
+
+    # Fallback: match on any individual word (handles "Marzahn Mitte" → "Marzahn")
+    if not matches:
+        for word in key.split():
+            if len(word) < 4:
+                continue
+            for plz, ortsteil in PLZ_ORTSTEIL.items():
+                for part in ortsteil.split("/"):
+                    if part.strip().lower() == word:
+                        matches.append(plz)
+                        break
+
     if not matches:
         return ""
     ring_plzs = [p for p in matches if p in INNERHALB_RING]
@@ -194,7 +218,9 @@ async def scrape_wbm():
                     link_el = immo.select_one("a.immo-button-cta[href]")
                     bezirk_el = item.select_one("div.area")
                     bezirk_text = bezirk_el.get_text(strip=True) if bezirk_el else ""
-                    plz_match = re.search(r'(\d{5})', bezirk_text)
+                    # PLZ is in the address line (e.g. "13591 Berlin"), not in div.area
+                    full_text = item.get_text(" ", strip=True)
+                    plz_match = re.search(r'\b(1[0-4]\d{3})\b', full_text)
                     plz = plz_match.group(1) if plz_match else _ortsteil_to_plz(bezirk_text)
                     bezirk = (bezirk_text + f", {stadt}") if bezirk_text else stadt
 
@@ -296,7 +322,8 @@ async def scrape_howoge():
                     address_el = item.select_one("div.address")
                     adresse = address_el.get_text(strip=True) if address_el else ""
 
-                    plz_match = re.search(r'(\d{5})', adresse)
+                    full_text = item.get_text(" ", strip=True)
+                    plz_match = re.search(r'\b(1[0-4]\d{3})\b', full_text)
                     plz = plz_match.group(1) if plz_match else ""
 
                     bezirk = stadt
