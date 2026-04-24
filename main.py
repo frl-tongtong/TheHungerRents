@@ -619,9 +619,11 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
                 wbs_line = "📋 Kein WBS erforderlich\n"
 
             # ── Send notification ──
+            plz = listing.get("plz", "")
+            location = f"{listing.get('bezirk', '?')} ({plz})" if plz else listing.get('bezirk', '?')
             msg = (
                 f"🏠 *Neue Wohnung gefunden!*\n\n"
-                f"📍 {listing.get('bezirk', '?')}\n"
+                f"📍 {location}\n"
                 f"🚪 {listing.get('zimmer', '?')} Zimmer\n"
                 f"💶 {listing.get('preis', '?')}€ warm\n"
                 f"📐 {listing.get('groesse', '?')} m²\n"
