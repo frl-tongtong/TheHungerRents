@@ -553,7 +553,17 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logger.warning(f"Could not send scraper alert: {e}")
         else:
+            was_alerting = consecutive_zeros.get(name, 0) >= ZERO_ALERT_THRESHOLD
             consecutive_zeros[name] = 0
+            if was_alerting:
+                try:
+                    await context.bot.send_message(
+                        chat_id=ADMIN_USER_ID,
+                        text=f"✅ *{name}* recovered — found {stat['count']} listings again.",
+                        parse_mode="Markdown",
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not send recovery alert: {e}")
 
     if not new_listings:
         logger.info("No new listings found.")
