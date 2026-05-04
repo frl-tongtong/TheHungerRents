@@ -14,6 +14,7 @@ from telegram.ext import (
 )
 from scraper import run_scraper
 from plz_berlin import INNERHALB_RING, BEZIRKE
+from filters import filter_listing
 
 import sentry_sdk
 
@@ -570,53 +571,17 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
         return
 
     users = db_get("user_preferences", {"active": "eq.true"})
-    zimmer_map = {"1+": 1, "2+": 2, "3+": 3, "egal": 0}
 
     for user in users:
         user_id = user["user_id"]
-        search_mode = user.get("search_mode", "ring")
-        bezirke = json.loads(user["bezirke"]) if isinstance(user["bezirke"], str) else user["bezirke"]
-        plz_list = json.loads(user["plz"]) if isinstance(user.get("plz", "[]"), str) else user.get("plz", [])
-        max_budget = user.get("budget", 99999)
-        if isinstance(max_budget, str):
-            max_budget = int(max_budget) if max_budget.isdigit() else 99999
-        min_zimmer = zimmer_map.get(user.get("zimmer", "egal"), 0)
-
-        user_wbs = user.get("wbs")  # None or int
 
         for listing in new_listings:
-            # ── Location filter ──
-            if search_mode == "ring":
-                listing_plz = listing.get("plz", "")
-                if listing_plz and listing_plz not in INNERHALB_RING:
-                    continue
-            elif search_mode == "plz":
-                listing_plz = listing.get("plz", "")
-                if listing_plz and plz_list and listing_plz not in plz_list:
-                    continue
-            elif search_mode == "bezirk" and bezirke:
-                listing_bezirk = listing.get("bezirk", "").lower()
-                if not any(b.lower() in listing_bezirk for b in bezirke):
-                    continue
-
-            # ── Budget filter ──
-            if listing.get("preis") and listing["preis"] > max_budget:
+            passes, _ = filter_listing(listing, user)
+            if not passes:
                 continue
-
-            # ── Zimmer filter ──
-            if listing.get("zimmer") and min_zimmer > 0 and listing["zimmer"] < min_zimmer:
-                continue
-
-            # ── WBS filter ──
-            listing_wbs = listing.get("wbs")
-            if listing_wbs:
-                if user_wbs is None:
-                    continue  # user has no WBS
-                wbs_min, wbs_max = listing_wbs
-                if not (wbs_min <= user_wbs <= wbs_max):
-                    continue
 
             # ── Build WBS line for notification ──
+            listing_wbs = listing.get("wbs")
             if listing_wbs:
                 wbs_min, wbs_max = listing_wbs
                 if wbs_min == wbs_max:
