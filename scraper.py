@@ -715,72 +715,70 @@ async def scrape_grandcity():
 async def scrape_berlinhaus():
     from plz_berlin import ALL_BERLIN_PLZ
     listings = []
+    MAX_PAGES = 50
+    ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     try:
-        async with _playwright_semaphore:
-            browser = await _get_browser()
-            page = await browser.new_page()
-            try:
-                await page.goto("https://www.berlinhaus.com/mietangebote/", wait_until="domcontentloaded", timeout=60000)
-                try:
-                    await page.click("button[id*='accept'], #CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll", timeout=5000)
-                    await page.wait_for_load_state("networkidle", timeout=15000)
-                except:
-                    pass
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers={"User-Agent": ua}) as client:
+            total_items = 0
+            for page_num in range(1, MAX_PAGES + 1):
+                url = ("https://www.berlinhaus.com/mietangebote/" if page_num == 1
+                       else f"https://www.berlinhaus.com/mietangebote/page/{page_num}/")
+                response = await client.get(url)
+                soup = BeautifulSoup(response.text, "html.parser")
+                items = soup.select("article.frymo-listing-item")
+                if not items:
+                    break
+                total_items += len(items)
 
-                html = await page.content()
-            finally:
-                await page.close()
+                for item in items:
+                    try:
+                        link_el = item.select_one("h3.frymo-listing-title a")
+                        if not link_el:
+                            continue
+                        listing_url = link_el["href"]
+                        titel = link_el.get_text(strip=True) or "Berlinhaus Wohnung"
 
-            soup = BeautifulSoup(html, "html.parser")
-            items = soup.select("article.frymo-listing-item")
-            logger.info(f"berlinhaus: found {len(items)} items")
+                        loc_el = item.select_one("div.frymo-listing-location")
+                        loc_text = loc_el.get_text(strip=True) if loc_el else ""
+                        plz_match = re.search(r'(\d{5})', loc_text)
+                        plz = plz_match.group(1) if plz_match else ""
 
-            for item in items:
-                try:
-                    full_text = item.get_text(" ", strip=True)
+                        if plz and plz not in ALL_BERLIN_PLZ:
+                            continue
 
-                    title_el = item.select_one("h3.frymo-listing-title a[href*='/immobilie/']")
-                    link_el = title_el or item.select_one("a[href*='/immobilie/']")
-                    if not link_el:
-                        continue
-                    url = link_el["href"]
-                    titel = link_el.get_text(strip=True) or "Berlinhaus Wohnung"
+                        city = loc_text.split(",", 1)[-1].strip() if "," in loc_text else loc_text
+                        bezirk = f"{city}, Berlin" if city and "berlin" not in city.lower() else city
 
-                    plz_match = re.search(r'(\d{5})', full_text)
-                    plz = plz_match.group(1) if plz_match else ""
+                        area_el = item.select_one("span.frymo-listing-area .frymo-listing-meta-item-value")
+                        groesse = area_el.get_text(strip=True).replace("m²", "").strip() if area_el else "?"
 
-                    if plz and plz not in ALL_BERLIN_PLZ:
-                        continue  # skip non-Berlin listings
+                        rooms_el = item.select_one("span.frymo-listing-rooms .frymo-listing-meta-item-value")
+                        zimmer = parse_zimmer(rooms_el.get_text(strip=True)) if rooms_el else None
 
-                    location_match = re.search(r'(\d{5}[^|,\n]*)', full_text)
-                    location_text = location_match.group(1).strip() if location_match else plz
+                        price_el = item.select_one(".frymo-listing-price-value")
+                        preis = parse_preis(price_el.get_text(strip=True)) if price_el else None
 
-                    groesse_match = re.search(r'([\d,]+)\s*m²', full_text)
-                    groesse = groesse_match.group(1) if groesse_match else "?"
-                    zimmer_match = re.search(r'(\d+)\s*Zimmer', full_text)
-                    zimmer = int(zimmer_match.group(1)) if zimmer_match else None
-                    preis_match = re.search(r'Kaltmiete\s*([\d.,]+)', full_text)
-                    preis = parse_preis(preis_match.group(1)) if preis_match else None
+                        img_el = item.select_one("img")
+                        bild = img_el.get("src") if img_el else None
 
-                    img_el = item.select_one("img")
-                    bild = img_el["src"] if img_el and img_el.get("src") else None
+                        listing = {
+                            "titel": titel,
+                            "preis": preis,
+                            "zimmer": zimmer,
+                            "groesse": groesse,
+                            "bezirk": bezirk,
+                            "plz": plz,
+                            "wbs": parse_wbs(titel),
+                            "url": listing_url,
+                            "bild": bild,
+                            "anbieter": "Berlinhaus",
+                        }
+                        listings.append(listing)
+                        logger.info(f"berlinhaus parsed: {titel} | {zimmer}Zi | {groesse}m² | {preis}€ | {plz} {bezirk}")
+                    except Exception as e:
+                        logger.warning(f"Error parsing berlinhaus item: {e}")
 
-                    listing = {
-                        "titel": titel,
-                        "preis": preis,
-                        "zimmer": zimmer,
-                        "groesse": groesse,
-                        "bezirk": location_text,
-                        "plz": plz,
-                        "wbs": parse_wbs(titel),
-                        "url": url,
-                        "bild": bild,
-                        "anbieter": "Berlinhaus",
-                    }
-                    listings.append(listing)
-                except Exception as e:
-                    logger.warning(f"Error parsing berlinhaus item: {e}")
-
+            logger.info(f"berlinhaus: scraped {page_num} pages ({total_items} total items, {len(listings)} Berlin listings)")
     except Exception as e:
         logger.error(f"Error scraping berlinhaus: {e}")
     return listings
