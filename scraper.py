@@ -732,16 +732,17 @@ async def scrape_berlinhaus():
                 await page.close()
 
             soup = BeautifulSoup(html, "html.parser")
-            items = soup.select("div.jet-listing-grid__item")
+            items = soup.select("article.frymo-listing-item")
             logger.info(f"berlinhaus: found {len(items)} items")
 
             for item in items:
                 try:
                     full_text = item.get_text(" ", strip=True)
 
-                    link_el = item.select_one("a[href*='/immobilie/']")
+                    title_el = item.select_one("h3.frymo-listing-title a[href*='/immobilie/']")
+                    link_el = title_el or item.select_one("a[href*='/immobilie/']")
                     if not link_el:
-                        continue  # skip non-listing items (e.g. news posts)
+                        continue
                     url = link_el["href"]
                     titel = link_el.get_text(strip=True) or "Berlinhaus Wohnung"
 
