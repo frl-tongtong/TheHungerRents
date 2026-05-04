@@ -132,59 +132,92 @@ def _ortsteil_to_plz(ortsteil_text):
 async def scrape_degewo():
     listings = []
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            response = await client.get(
-                "https://www.degewo.de/immosuche",
-                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-            )
-            soup = BeautifulSoup(response.text, "html.parser")
-            items = soup.select("article.article-list__item--immosearch")
-            logger.info(f"degewo: found {len(items)} raw items")
-
-            for item in items:
+        async with _playwright_semaphore:
+            browser = await _get_browser()
+            page = await browser.new_page()
+            try:
+                await page.goto(
+                    "https://www.degewo.de/immosuche",
+                    wait_until="domcontentloaded",
+                    timeout=60000
+                )
+                # Dismiss Cookiebot banner if present
                 try:
-                    address_el = item.select_one("span.article__meta")
-                    address_text = address_el.get_text(strip=True) if address_el else ""
-                    ortsteil = address_text.split("|")[-1].strip() if "|" in address_text else ""
-                    bezirk = f"{ortsteil}, Berlin" if ortsteil else "Berlin"
-                    plz = _ortsteil_to_plz(ortsteil)
+                    await page.click(
+                        "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll, "
+                        "button[id*='CookiebotDialog'][id*='Allow'], "
+                        ".c-button--cookie-accept",
+                        timeout=5000
+                    )
+                except Exception:
+                    pass
 
-                    titel_el = item.select_one("h2.article__title")
-                    titel = titel_el.get_text(strip=True) if titel_el else "Degewo Wohnung"
+                try:
+                    await page.wait_for_selector("div.c-teaser.c-teaser--apartment", timeout=30000)
+                except Exception:
+                    logger.warning("degewo: c-teaser--apartment not found, trying to parse anyway")
 
-                    preis_el = item.select_one("div.article__price-tag span.price")
-                    preis = parse_preis(preis_el.get_text() if preis_el else None)
+                html = await page.content()
+            finally:
+                await page.close()
 
-                    zimmer = None
-                    groesse = "?"
-                    for span in item.select("ul.article__properties li span.text"):
-                        text = span.get_text(strip=True)
-                        if "Zimmer" in text:
-                            zimmer = parse_zimmer(text)
-                        elif "m²" in text:
-                            groesse = text.replace("m²", "").strip()
+        soup = BeautifulSoup(html, "html.parser")
+        items = soup.select("div.c-teaser.c-teaser--apartment")
+        logger.info(f"degewo: found {len(items)} raw items")
 
-                    link_el = item.select_one("a[href*='/immosuche/details/']")
-                    url = link_el["href"] if link_el else ""
-                    if url and not url.startswith("http"):
-                        url = "https://www.degewo.de" + url
+        if not items:
+            title_tag = soup.select_one("title")
+            logger.warning(f"degewo: no items found, page title='{title_tag.get_text() if title_tag else 'unknown'}'")
 
-                    listing = {
-                        "titel": titel,
-                        "preis": preis,
-                        "zimmer": zimmer,
-                        "groesse": groesse,
-                        "bezirk": bezirk,
-                        "plz": plz,
-                        "wbs": parse_wbs(titel),
-                        "url": url,
-                        "bild": extract_img(item, "https://www.degewo.de"),
-                        "anbieter": "degewo",
-                    }
-                    listings.append(listing)
-                    logger.info(f"degewo parsed: {listing['titel']} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']} | {listing['plz']} {listing['bezirk']}")
-                except Exception as e:
-                    logger.warning(f"Error parsing degewo item: {e}")
+        for item in items:
+            try:
+                titel_el = item.select_one("h3.c-headline a, a.c-headline--linked")
+                titel = titel_el.get_text(strip=True) if titel_el else "Degewo Wohnung"
+
+                address_el = item.select_one("div.c-copy p")
+                address_text = address_el.get_text(strip=True) if address_el else ""
+                ortsteil = address_text.split("|")[-1].strip() if "|" in address_text else ""
+                bezirk = f"{ortsteil}, Berlin" if ortsteil else "Berlin"
+                plz = _ortsteil_to_plz(ortsteil)
+
+                preis = None
+                zimmer = None
+                groesse = "?"
+                for dl_item in item.select("div.c-definition-list__item"):
+                    dt = dl_item.select_one("dt")
+                    dd = dl_item.select_one("dd")
+                    if not dt or not dd:
+                        continue
+                    value = dt.get_text(strip=True)
+                    label = dd.get_text(strip=True).lower()
+                    if "miete" in label:
+                        preis = parse_preis(value)
+                    elif "zimmer" in label:
+                        zimmer = parse_zimmer(value)
+                    elif "m²" in label:
+                        groesse = value
+
+                link_el = item.select_one("a[href*='/immosuche/details/']")
+                url = link_el["href"] if link_el else ""
+                if url and not url.startswith("http"):
+                    url = "https://www.degewo.de" + url
+
+                listing = {
+                    "titel": titel,
+                    "preis": preis,
+                    "zimmer": zimmer,
+                    "groesse": groesse,
+                    "bezirk": bezirk,
+                    "plz": plz,
+                    "wbs": parse_wbs(titel),
+                    "url": url,
+                    "bild": extract_img(item, "https://www.degewo.de"),
+                    "anbieter": "degewo",
+                }
+                listings.append(listing)
+                logger.info(f"degewo parsed: {listing['titel']} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']} | {listing['plz']} {listing['bezirk']}")
+            except Exception as e:
+                logger.warning(f"Error parsing degewo item: {e}")
     except Exception as e:
         logger.error(f"Error scraping degewo: {e}")
     return listings
