@@ -129,6 +129,17 @@ def _ortsteil_to_plz(ortsteil_text):
     return ring_plzs[0] if ring_plzs else matches[0]
 
 
+def _degewo_parse_page(soup):
+    """Parse one page of Degewo search results; returns (listings_on_page, next_page_urls)."""
+    items = soup.select("div.c-teaser.c-teaser--apartment")
+    next_urls = []
+    for a in soup.select("a[href*='tx_openimmo_immobilie%5Bpage%5D'], a[href*='[page]']"):
+        href = a.get("href", "")
+        if href and href not in next_urls:
+            next_urls.append("https://www.degewo.de" + href if href.startswith("/") else href)
+    return items, next_urls
+
+
 async def scrape_degewo():
     listings = []
     try:
@@ -136,11 +147,15 @@ async def scrape_degewo():
             browser = await _get_browser()
             page = await browser.new_page()
             try:
-                await page.goto(
+                resp = await page.goto(
                     "https://www.degewo.de/immosuche",
                     wait_until="domcontentloaded",
                     timeout=60000
                 )
+                http_status = resp.status if resp else "unknown"
+                page_title = await page.title()
+                logger.info(f"degewo: HTTP {http_status}, title='{page_title}', url={page.url}")
+
                 # Dismiss Cookiebot banner if present
                 try:
                     await page.click(
@@ -153,23 +168,50 @@ async def scrape_degewo():
                     pass
 
                 try:
-                    await page.wait_for_selector("div.c-teaser.c-teaser--apartment", timeout=30000)
+                    await page.wait_for_selector("div.c-teaser.c-teaser--apartment", timeout=20000)
                 except Exception:
-                    logger.warning("degewo: c-teaser--apartment not found, trying to parse anyway")
+                    logger.warning(f"degewo: c-teaser--apartment not found on page 1 (title='{page_title}')")
 
                 html = await page.content()
             finally:
                 await page.close()
 
         soup = BeautifulSoup(html, "html.parser")
-        items = soup.select("div.c-teaser.c-teaser--apartment")
-        logger.info(f"degewo: found {len(items)} raw items")
+        items, next_urls = _degewo_parse_page(soup)
+        logger.info(f"degewo page 1: {len(items)} items, {len(next_urls)} more pages")
 
-        if not items:
-            title_tag = soup.select_one("title")
-            logger.warning(f"degewo: no items found, page title='{title_tag.get_text() if title_tag else 'unknown'}'")
+        all_items = list(items)
 
-        for item in items:
+        # Fetch remaining pages with httpx (server-rendered, no JS needed after first load)
+        if next_urls:
+            ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers={"User-Agent": ua}) as client:
+                def norm(u):
+                    return u.split("#")[0]
+
+                # Page 1 already done; deduplicate queue using dict.fromkeys (preserves order)
+                norm_next = list(dict.fromkeys(norm(u) for u in next_urls))
+                visited = {"https://www.degewo.de/immosuche"} | set(norm_next)
+                queue = norm_next
+                while queue:
+                    url = queue.pop(0)
+                    try:
+                        r = await client.get(url)
+                        s = BeautifulSoup(r.text, "html.parser")
+                        page_items, more_urls = _degewo_parse_page(s)
+                        all_items.extend(page_items)
+                        logger.info(f"degewo: fetched {url[-50:]} → {len(page_items)} items")
+                        for u in more_urls:
+                            nu = norm(u)
+                            if nu not in visited:
+                                visited.add(nu)
+                                queue.append(nu)
+                    except Exception as e:
+                        logger.warning(f"degewo: failed to fetch page {url}: {e}")
+
+        logger.info(f"degewo: {len(all_items)} total items across all pages")
+
+        for item in all_items:
             try:
                 titel_el = item.select_one("h3.c-headline a, a.c-headline--linked")
                 titel = titel_el.get_text(strip=True) if titel_el else "Degewo Wohnung"
