@@ -4,7 +4,7 @@ import re
 import sys
 import json
 import logging
-from datetime import time, datetime, timezone
+from datetime import time, datetime, timezone, timedelta
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -480,8 +480,21 @@ async def announce_new_version(context: ContextTypes.DEFAULT_TYPE):
 
 # ─── Daily Message ──────────────────────────────────────────
 
+def _provider_from_url(url: str) -> str:
+    url = url.lower()
+    if "wbm.de" in url: return "WBM"
+    if "degewo.de" in url: return "Degewo"
+    if "howoge.de" in url: return "HOWOGE"
+    if "gewobag.de" in url: return "Gewobag"
+    if "stadtundland.de" in url: return "Stadt und Land"
+    if "berlinhaus.com" in url: return "Berlinhaus"
+    if "grandcity" in url: return "Grand City"
+    return "Sonstige"
+
+
 async def daily_message(context: ContextTypes.DEFAULT_TYPE):
     try:
+        # ── Scraper health (last known run) ──────────────────
         health_lines = []
         for stat in last_scraper_stats:
             if stat["error"]:
@@ -499,9 +512,40 @@ async def daily_message(context: ContextTypes.DEFAULT_TYPE):
 
         health_text = "\n\n*Scraper Health:*\n" + "\n".join(health_lines) if health_lines else ""
 
+        # ── New listings in last 24h (from seen_listings) ────
+        listings_text = ""
+        try:
+            since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            recent = db_get("seen_listings", {
+                "created_at": f"gt.{since}",
+                "order": "created_at.desc",
+                "limit": "200",
+            })
+            if recent is not None:
+                by_provider: dict[str, list[str]] = {}
+                for item in recent:
+                    p = _provider_from_url(item.get("url", ""))
+                    by_provider.setdefault(p, []).append(item.get("titel", "?"))
+
+                all_providers = ["Degewo", "WBM", "HOWOGE", "Gewobag", "Stadt und Land", "Berlinhaus", "Grand City"]
+                lines = [f"*Neue Listings letzte 24h: {len(recent)}*"]
+                for p in all_providers:
+                    titles = by_provider.get(p, [])
+                    if titles:
+                        lines.append(f"✅ {p}: {len(titles)}")
+                        for t in titles[:2]:
+                            lines.append(f"  • {t[:60]}")
+                        if len(titles) > 2:
+                            lines.append(f"  … +{len(titles) - 2} weitere")
+                    else:
+                        lines.append(f"⚠️ {p}: 0 neue")
+                listings_text = "\n\n" + "\n".join(lines)
+        except Exception as e:
+            listings_text = f"\n\n⚠️ Listings-Abfrage fehlgeschlagen: {e}"
+
         await context.bot.send_message(
             chat_id=ADMIN_USER_ID,
-            text=f"Good morning! This is your reminder that Maik loves you dearly! ❤️🥰💖{health_text}",
+            text=f"Good morning! This is your reminder that Maik loves you dearly! ❤️🥰💖{health_text}{listings_text}",
             parse_mode="Markdown",
         )
     except Exception as e:
