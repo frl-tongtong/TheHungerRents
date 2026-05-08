@@ -570,6 +570,26 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
         logger.info("No new listings found.")
         return
 
+    # Mark listings as seen here (after timeout risk) so a cancelled run_scraper
+    # doesn't permanently lose listings without notifying anyone.
+    async with httpx.AsyncClient(timeout=10) as client:
+        mark_headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+        }
+        for listing in new_listings:
+            url = listing.get("url")
+            if url:
+                try:
+                    await client.post(
+                        f"{SUPABASE_URL}/rest/v1/seen_listings",
+                        headers=mark_headers,
+                        json={"url": url, "titel": listing.get("titel", "")},
+                    )
+                except Exception as e:
+                    logger.error(f"DB error marking seen: {e}")
+
     users = db_get("user_preferences", {"active": "eq.true"})
 
     for user in users:

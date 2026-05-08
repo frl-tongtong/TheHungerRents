@@ -150,7 +150,7 @@ async def scrape_degewo():
                 resp = await page.goto(
                     "https://www.degewo.de/immosuche",
                     wait_until="domcontentloaded",
-                    timeout=60000
+                    timeout=15000
                 )
                 http_status = resp.status if resp else "unknown"
                 page_title = await page.title()
@@ -318,7 +318,7 @@ async def scrape_wbm():
                         "anbieter": "WBM",
                     }
                     listings.append(listing)
-                    logger.info(f"wbm parsed: {listing['titel']} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']} | {listing['bezirk']}")
+                    logger.info(f"wbm parsed: {listing['titel']} | {listing['zimmer']} Zi | {listing['groesse']} | {listing['preis']}€ | WBS:{listing['wbs']} | {listing['plz']} {listing['bezirk']}")
                 except Exception as e:
                     logger.warning(f"Error parsing wbm item: {e}")
     except Exception as e:
@@ -872,11 +872,6 @@ async def run_scraper(supabase_url, supabase_key):
                     params={"url": f"eq.{url}"}
                 )
                 if r.status_code == 200 and len(r.json()) == 0:
-                    await client.post(
-                        f"{supabase_url}/rest/v1/seen_listings",
-                        headers=headers,
-                        json={"url": url, "titel": listing.get("titel", "")}
-                    )
                     new_listings.append(listing)
             except Exception as e:
                 logger.error(f"DB error: {e}")
