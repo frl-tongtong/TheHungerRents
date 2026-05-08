@@ -465,13 +465,27 @@ async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─── Startup Announcement ───────────────────────────────────
 
 async def announce_new_version(context: ContextTypes.DEFAULT_TYPE):
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    marker = f"announce:{today}"
+    already_sent = db_get("seen_listings", {"url": f"eq.{marker}"})
+    if already_sent:
+        logger.info("announce_new_version: already sent today, skipping")
+        return
+
+    db_upsert("seen_listings", {"url": marker, "titel": "deployment announcement"})
+
     users = db_get("user_preferences")
     total = len(users)
     for user in users:
         try:
             await context.bot.send_message(
                 chat_id=user["user_id"],
-                text=f"🆕 *Neue Version deployed!*\n\nDer Bot wurde aktualisiert und läuft wieder.\n👥 Aktuell {total} Nutzer registriert.",
+                text=(
+                    f"🔄 *Bot neu gestartet!*\n\n"
+                    f"Der Bot wurde kurz aktualisiert und läuft wieder — "
+                    f"du musst nichts tun, alle deine Einstellungen bleiben erhalten.\n\n"
+                    f"👥 Aktuell {total} Nutzer registriert."
+                ),
                 parse_mode="Markdown"
             )
         except Exception as e:
