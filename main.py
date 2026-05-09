@@ -65,8 +65,15 @@ ZIMMER_OPTIONS = ["1+", "2+", "3+", "egal"]
 def db_get(table, filters=None):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     params = filters or {}
-    r = httpx.get(url, headers=HEADERS, params=params)
-    return r.json() if r.status_code == 200 else []
+    try:
+        r = httpx.get(url, headers=HEADERS, params=params)
+        if r.status_code == 200:
+            return r.json()
+        logger.error(f"db_get {table} failed: {r.status_code} {r.text[:200]}")
+        return None
+    except Exception as e:
+        logger.error(f"db_get {table} exception: {e}")
+        return None
 
 
 def db_upsert(table, data):
@@ -446,6 +453,9 @@ async def wbs_level_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     result = db_get("user_preferences", {"user_id": f"eq.{user_id}"})
+    if result is None:
+        await update.message.reply_text("⚠️ Datenbankfehler — bitte kurz warten und erneut versuchen.")
+        return
     if result:
         current = result[0]["active"]
         new_state = not current
@@ -478,7 +488,7 @@ async def announce_new_version(context: ContextTypes.DEFAULT_TYPE):
         json={"url": marker, "titel": "deployment announcement"},
     )
 
-    users = db_get("user_preferences")
+    users = db_get("user_preferences") or []
     total = len(users)
     for user in users:
         try:
@@ -632,8 +642,13 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
         logger.info("No new listings found.")
         return
 
-    # Mark listings as seen here (after timeout risk) so a cancelled run_scraper
-    # doesn't permanently lose listings without notifying anyone.
+    # Fetch users BEFORE marking as seen: if the user fetch fails we skip
+    # everything and retry next run, so listings are never permanently lost.
+    users = db_get("user_preferences", {"active": "eq.true"})
+    if users is None:
+        logger.error("scraper_job: could not fetch users — skipping mark-as-seen and notifications (will retry next run)")
+        return
+
     async with httpx.AsyncClient(timeout=10) as client:
         mark_headers = {
             "apikey": SUPABASE_KEY,
@@ -652,7 +667,9 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logger.error(f"DB error marking seen: {e}")
 
-    users = db_get("user_preferences", {"active": "eq.true"})
+    if not users:
+        logger.info("No active users — listings marked seen, no notifications sent.")
+        return
 
     for user in users:
         user_id = user["user_id"]
@@ -678,22 +695,23 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
             # ── Send notification ──
             plz = listing.get("plz", "")
             location = f"{listing.get('bezirk', '?')} ({plz})" if plz else listing.get('bezirk', '?')
+            url = listing.get('url', '')
             msg = (
-                f"🏠 *Neue Wohnung gefunden!*\n\n"
+                f"🏠 <b>Neue Wohnung gefunden!</b>\n\n"
                 f"📍 {location}\n"
                 f"🚪 {listing.get('zimmer', '?')} Zimmer\n"
                 f"💶 {listing.get('preis', '?')}€ warm\n"
                 f"📐 {listing.get('groesse', '?')} m²\n"
                 f"{wbs_line}"
                 f"🏢 {listing.get('anbieter', '?')}\n\n"
-                f"🔗 [Zur Wohnung]({listing.get('url', '')})"
+                f"🔗 <a href='{url}'>Zur Wohnung</a>"
             )
             bild = listing.get("bild")
             try:
                 if bild:
                     await context.bot.send_photo(
                         chat_id=user_id, photo=bild, caption=msg,
-                        parse_mode="Markdown"
+                        parse_mode="HTML"
                     )
                 else:
                     raise ValueError("no image")
@@ -701,7 +719,7 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await context.bot.send_message(
                         chat_id=user_id, text=msg,
-                        parse_mode="Markdown", disable_web_page_preview=False
+                        parse_mode="HTML", disable_web_page_preview=False
                     )
                 except Exception as e:
                     logger.error(f"Could not send to {user_id}: {e}")
