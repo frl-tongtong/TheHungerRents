@@ -472,7 +472,11 @@ async def announce_new_version(context: ContextTypes.DEFAULT_TYPE):
         logger.info("announce_new_version: already sent today, skipping")
         return
 
-    db_upsert("seen_listings", {"url": marker, "titel": "deployment announcement"})
+    httpx.post(
+        f"{SUPABASE_URL}/rest/v1/seen_listings",
+        headers=HEADERS,
+        json={"url": marker, "titel": "deployment announcement"},
+    )
 
     users = db_get("user_preferences")
     total = len(users)
