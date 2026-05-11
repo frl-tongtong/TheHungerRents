@@ -1,5 +1,5 @@
 import json
-from plz_berlin import INNERHALB_RING
+from plz_berlin import INNERHALB_RING, plz_matches_filter
 
 _ZIMMER_MAP = {"1+": 1, "2+": 2, "3+": 3, "egal": 0}
 
@@ -30,9 +30,13 @@ def filter_listing(listing: dict, user: dict) -> tuple[bool, str]:
         if listing_plz and plz_list and listing_plz not in plz_list:
             return False, f"PLZ {listing_plz} nicht in Nutzerliste"
     elif search_mode == "bezirk" and bezirke:
-        listing_bezirk = listing.get("bezirk", "").lower()
-        if not any(b.lower() in listing_bezirk for b in bezirke):
-            return False, f"Bezirk nicht in Auswahl {bezirke}"
+        if listing_plz:
+            if not plz_matches_filter(listing_plz, "bezirk", bezirke):
+                return False, f"PLZ {listing_plz} nicht in Bezirk-Auswahl {bezirke}"
+        else:
+            listing_bezirk = listing.get("bezirk", "").lower()
+            if not any(b.lower() in listing_bezirk for b in bezirke):
+                return False, f"Bezirk nicht in Auswahl {bezirke}"
 
     # ── Budget ──
     if listing.get("preis") and listing["preis"] > max_budget:
