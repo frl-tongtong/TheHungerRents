@@ -861,24 +861,37 @@ async def run_scraper(supabase_url, supabase_key):
             logger.error(f"Scraper error ({name}): {r}")
     logger.info(f"Found {len(all_listings)} total listings")
 
-    listings_with_url = [l for l in all_listings if l.get("url")]
+    # Deduplicate by URL before checking
+    seen_in_batch: set[str] = set()
+    listings_with_url = []
+    for l in all_listings:
+        url = l.get("url")
+        if url and url not in seen_in_batch:
+            seen_in_batch.add(url)
+            listings_with_url.append(l)
+
     new_listings = []
     if listings_with_url:
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                url_csv = ",".join(l["url"] for l in listings_with_url)
-                r = await client.get(
-                    f"{supabase_url}/rest/v1/seen_listings",
-                    headers=headers,
-                    params={"url": f"in.({url_csv})", "select": "url"},
-                )
-                if r.status_code == 200:
-                    seen_urls = {row["url"] for row in r.json()}
-                    new_listings = [l for l in listings_with_url if l["url"] not in seen_urls]
-                else:
-                    logger.error(f"DB batch check failed: {r.status_code} {r.text[:200]}")
-        except Exception as e:
-            logger.error(f"DB error in batch seen check: {e}")
+        sem = asyncio.Semaphore(10)
+
+        async def _is_new(client: httpx.AsyncClient, url: str) -> bool:
+            async with sem:
+                try:
+                    r = await client.get(
+                        f"{supabase_url}/rest/v1/seen_listings",
+                        headers=headers,
+                        params={"url": f"eq.{url}", "select": "url", "limit": "1"},
+                    )
+                    return r.status_code == 200 and len(r.json()) == 0
+                except Exception as e:
+                    logger.error(f"DB error checking {url}: {e}")
+                    return False
+
+        async with httpx.AsyncClient(timeout=10) as client:
+            results = await asyncio.gather(
+                *[_is_new(client, l["url"]) for l in listings_with_url]
+            )
+        new_listings = [l for l, is_new in zip(listings_with_url, results) if is_new]
 
     logger.info(f"Found {len(new_listings)} NEW listings")
 
