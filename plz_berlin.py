@@ -43,14 +43,14 @@ BEZIRK_PLZ = {
         "13355", "13357", "13359", "13405", "13407", "13409",
     },
     "Friedrichshain-Kreuzberg": {
-        "10243", "10247", "10249",  # Friedrichshain
+        "10243", "10245", "10247", "10249",  # Friedrichshain
         "10785", "10961", "10963", "10965", "10967",  # Kreuzberg
         "10969", "10997", "10999",
     },
-    "Prenzlauer Berg / Pankow": {
+    "Pankow": {
         "10247", "10249", "10405", "10407", "10409",  # Prenzlauer Berg
         "10435", "10437", "10439",
-        "13086", "13088",  # Weißensee
+        "13086", "13088", "13089",  # Weißensee/Heinersdorf
         "13125", "13127", "13129",  # Buch/Karow/Blankenburg
         "13156", "13158", "13159",  # Rosenthal/Blankenfelde
         "13187", "13189",  # Pankow
