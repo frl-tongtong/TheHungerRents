@@ -689,6 +689,7 @@ async def scrape_stadtundland():
 
 
 async def scrape_grandcity():
+    from plz_berlin import ALL_BERLIN_PLZ
     listings = []
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
@@ -704,7 +705,8 @@ async def scrape_grandcity():
                 try:
                     nice_url = item.get("data-nice-url", "").strip()
                     plz_match = re.search(r'_(\d{5})_', nice_url)
-                    plz = plz_match.group(1) if plz_match else ""
+                    plz_candidate = plz_match.group(1) if plz_match else ""
+                    plz = plz_candidate if plz_candidate in ALL_BERLIN_PLZ else ""
 
                     url = ("https://www.grandcityproperty.de" + nice_url) if nice_url else ""
 
