@@ -595,10 +595,10 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
     logger.info("Running scraper...")
     try:
         new_listings, scraper_stats = await asyncio.wait_for(
-            run_scraper(SUPABASE_URL, SUPABASE_KEY), timeout=115
+            run_scraper(SUPABASE_URL, SUPABASE_KEY), timeout=200
         )
     except asyncio.TimeoutError:
-        logger.error("scraper_job timed out after 115s")
+        logger.error("scraper_job timed out after 200s")
         return
     last_scraper_stats = scraper_stats
 

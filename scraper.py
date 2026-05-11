@@ -861,22 +861,24 @@ async def run_scraper(supabase_url, supabase_key):
             logger.error(f"Scraper error ({name}): {r}")
     logger.info(f"Found {len(all_listings)} total listings")
 
+    listings_with_url = [l for l in all_listings if l.get("url")]
     new_listings = []
-    async with httpx.AsyncClient(timeout=10) as client:
-        for listing in all_listings:
-            url = listing.get("url")
-            if not url:
-                continue
-            try:
+    if listings_with_url:
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                url_csv = ",".join(l["url"] for l in listings_with_url)
                 r = await client.get(
                     f"{supabase_url}/rest/v1/seen_listings",
                     headers=headers,
-                    params={"url": f"eq.{url}"}
+                    params={"url": f"in.({url_csv})", "select": "url"},
                 )
-                if r.status_code == 200 and len(r.json()) == 0:
-                    new_listings.append(listing)
-            except Exception as e:
-                logger.error(f"DB error: {e}")
+                if r.status_code == 200:
+                    seen_urls = {row["url"] for row in r.json()}
+                    new_listings = [l for l in listings_with_url if l["url"] not in seen_urls]
+                else:
+                    logger.error(f"DB batch check failed: {r.status_code} {r.text[:200]}")
+        except Exception as e:
+            logger.error(f"DB error in batch seen check: {e}")
 
     logger.info(f"Found {len(new_listings)} NEW listings")
 
