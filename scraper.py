@@ -828,7 +828,7 @@ async def scrape_berlinhaus():
     return listings
 
 
-SCRAPER_NAMES = ["Degewo", "WBM", "HOWOGE", "Gewobag", "Stadt und Land", "Berlinhaus", "Grand City"]
+SCRAPER_NAMES = ["Degewo", "WBM", "HOWOGE", "Gewobag", "Stadt und Land", "Grand City"]
 
 
 async def run_scraper(supabase_url, supabase_key):
@@ -845,7 +845,6 @@ async def run_scraper(supabase_url, supabase_key):
         scrape_howoge(),
         scrape_gewobag(),
         scrape_stadtundland(),
-        scrape_berlinhaus(),
         scrape_grandcity(),
         return_exceptions=True,
     )
