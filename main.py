@@ -13,7 +13,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler
 )
 from scraper import run_scraper
-from plz_berlin import INNERHALB_RING, BEZIRKE
+from plz_berlin import INNERHALB_RING, BEZIRKE, PLZ_ORTSTEIL
 from filters import filter_listing
 
 import sentry_sdk
@@ -694,7 +694,8 @@ async def scraper_job(context: ContextTypes.DEFAULT_TYPE):
 
             # ── Send notification ──
             plz = listing.get("plz", "")
-            location = f"{listing.get('bezirk', '?')} ({plz})" if plz else listing.get('bezirk', '?')
+            ortsteil = PLZ_ORTSTEIL.get(plz) if plz else None
+            location = f"{ortsteil or listing.get('bezirk', '?')} ({plz})" if plz else listing.get('bezirk', '?')
             url = listing.get('url', '')
             msg = (
                 f"🏠 <b>Neue Wohnung gefunden!</b>\n\n"

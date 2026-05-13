@@ -21,9 +21,10 @@ SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 
 from scraper import (
     scrape_degewo, scrape_wbm, scrape_howoge, scrape_gewobag,
-    scrape_stadtundland, scrape_berlinhaus, scrape_grandcity, SCRAPER_NAMES,
+    scrape_stadtundland, scrape_grandcity, SCRAPER_NAMES,
 )
 from filters import filter_listing
+from plz_berlin import PLZ_ORTSTEIL
 
 
 async def fetch_user():
@@ -52,7 +53,8 @@ async def send_listing(listing: dict):
         wbs_line = "📋 Kein WBS erforderlich\n"
 
     plz = listing.get("plz", "")
-    location = f"{listing.get('bezirk', '?')} ({plz})" if plz else listing.get("bezirk", "?")
+    ortsteil = PLZ_ORTSTEIL.get(plz) if plz else None
+    location = f"{ortsteil or listing.get('bezirk', '?')} ({plz})" if plz else listing.get("bezirk", "?")
     url = listing.get("url", "")
     msg = (
         f"🏠 <b>Neue Wohnung gefunden!</b>\n\n"
